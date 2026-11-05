@@ -24,6 +24,20 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from omni_x402_prover.x402_protocol import X402Config
+from omni_x402_prover.arb_trap_detector import (
+    MarketRuleSpec,
+    extract_rule_spec,
+    fetch_kalshi_market,
+    fetch_polymarket_market,
+    verify_arb_resolution_divergence,
+)
+from omni_x402_prover.multichain_token_verifier import (
+    audit_multichain_token,
+    build_eas_attestation_payload,
+    discover_multichain_token_topology,
+    verify_multichain_token_invariants,
+    verify_multichain_token_z3,
+)
 
 # --- Dynamic Path Resolution for regalo-asi ---
 def _resolve_and_import_verifiers() -> Tuple[Any, Any]:
@@ -1235,9 +1249,27 @@ class ProverService:
     def verify_polymarket_basket(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handler 2: /x402/verify-polymarket-basket
-        Verifies Polymarket NegRisk / Conditional Token solvency + Dutch-Book net edge.
+        Verifies Polymarket NegRisk / Conditional Token solvency + Dutch-Book net edge,
+        plus Polymarket <-> Kalshi Arb Trap Z3 Double-Loss Resolution Divergence.
         """
-        raw_asks = payload.get("outcome_ask_prices", [])
+        has_arb_trap = any(
+            k in payload
+            for k in (
+                "polymarket_rules",
+                "kalshi_rules",
+                "polymarket_slug",
+                "kalshi_ticker",
+                "pm_slug",
+                "kalshi_market",
+                "pm_rules",
+                "pm_spec",
+                "kalshi_spec",
+            )
+        )
+
+        raw_asks = payload.get("outcome_ask_prices")
+        if raw_asks is None and has_arb_trap:
+            raw_asks = [0.48, 0.48]
         if not isinstance(raw_asks, list) or not 2 <= len(raw_asks) <= _MAX_POLYMARKET_OUTCOMES:
             raise ValueError(f"outcome_ask_prices must be a list of 2..{_MAX_POLYMARKET_OUTCOMES} prices")
         raw_asks = [_require_number(p, "outcome_ask_prices entries", 0, _MAX_POLYMARKET_ATOMIC) for p in raw_asks]
@@ -1286,7 +1318,92 @@ class ProverService:
             custom_conversion_formula=custom_formula,
         )
 
-        return {
+        # Arb Trap Resolution Divergence Verification if requested
+        arb_res: Optional[Dict[str, Any]] = None
+        if has_arb_trap:
+            # Build Polymarket spec
+            if "pm_spec" in payload and isinstance(payload["pm_spec"], dict):
+                pm_spec = extract_rule_spec(
+                    payload["pm_spec"].get("title", "Polymarket Market"),
+                    payload["pm_spec"].get("rules_text", ""),
+                    end_date_iso=payload["pm_spec"].get("end_date_iso"),
+                    platform="polymarket",
+                    overrides=payload["pm_spec"],
+                )
+            elif "polymarket_rules" in payload or "pm_rules" in payload:
+                pm_text = str(payload.get("polymarket_rules") or payload.get("pm_rules", ""))
+                pm_title = str(payload.get("polymarket_title", "Polymarket Market"))
+                pm_end = payload.get("polymarket_end_date")
+                pm_spec = extract_rule_spec(
+                    pm_title,
+                    pm_text,
+                    end_date_iso=pm_end,
+                    platform="polymarket",
+                    overrides=payload.get("polymarket_overrides"),
+                )
+            elif "polymarket_slug" in payload or "pm_slug" in payload:
+                pm_slug = str(payload.get("polymarket_slug") or payload.get("pm_slug"))
+                try:
+                    pm_data = fetch_polymarket_market(pm_slug)
+                    pm_spec = extract_rule_spec(
+                        pm_data["title"],
+                        pm_data["rules_text"],
+                        end_date_iso=pm_data["end_date_iso"],
+                        platform="polymarket",
+                        overrides=payload.get("polymarket_overrides"),
+                    )
+                except Exception as exc:
+                    logger.warning("Could not fetch Polymarket market %s: %s", pm_slug, exc)
+                    pm_spec = extract_rule_spec(pm_slug, pm_slug, platform="polymarket")
+            else:
+                pm_spec = extract_rule_spec("Polymarket Generic", "", platform="polymarket")
+
+            # Build Kalshi spec
+            if "kalshi_spec" in payload and isinstance(payload["kalshi_spec"], dict):
+                kalshi_spec = extract_rule_spec(
+                    payload["kalshi_spec"].get("title", "Kalshi Market"),
+                    payload["kalshi_spec"].get("rules_text", ""),
+                    end_date_iso=payload["kalshi_spec"].get("end_date_iso"),
+                    platform="kalshi",
+                    overrides=payload["kalshi_spec"],
+                )
+            elif "kalshi_rules" in payload:
+                k_text = str(payload["kalshi_rules"])
+                k_title = str(payload.get("kalshi_title", "Kalshi Market"))
+                k_end = payload.get("kalshi_end_date")
+                kalshi_spec = extract_rule_spec(
+                    k_title,
+                    k_text,
+                    end_date_iso=k_end,
+                    platform="kalshi",
+                    overrides=payload.get("kalshi_overrides"),
+                )
+            elif "kalshi_ticker" in payload or "kalshi_market" in payload:
+                k_ticker = str(payload.get("kalshi_ticker") or payload.get("kalshi_market"))
+                try:
+                    k_data = fetch_kalshi_market(k_ticker)
+                    kalshi_spec = extract_rule_spec(
+                        k_data["title"],
+                        k_data["rules_text"],
+                        end_date_iso=k_data["end_date_iso"],
+                        platform="kalshi",
+                        overrides=payload.get("kalshi_overrides"),
+                    )
+                except Exception as exc:
+                    logger.warning("Could not fetch Kalshi market %s: %s", k_ticker, exc)
+                    kalshi_spec = extract_rule_spec(k_ticker, k_ticker, platform="kalshi")
+            else:
+                kalshi_spec = extract_rule_spec("Kalshi Generic", "", platform="kalshi")
+
+            arb_res = verify_arb_resolution_divergence(
+                pm_spec=pm_spec,
+                kalshi_spec=kalshi_spec,
+                pm_yes_ask=payload.get("pm_yes_ask", float(raw_asks[0]) if len(raw_asks) > 0 else None),
+                kalshi_no_ask=payload.get("kalshi_no_ask", float(raw_asks[1]) if len(raw_asks) > 1 else None),
+                fee_bps=fee_bps,
+            )
+
+        resp = {
             "verified": solvency_res.verified,
             "check_type": "polymarket_basket_and_solvency",
             "solver_mode": solvency_res.solver_mode,
@@ -1309,6 +1426,22 @@ class ProverService:
                 "fee_bps": fee_bps,
             },
         }
+
+        if arb_res:
+            resp["arb_trap_analysis"] = arb_res
+            resp["arb_trap_detected"] = arb_res.get("trap_detected", False)
+            resp["risk_grade"] = arb_res.get("risk_grade", "LOW_RISK")
+            resp["divergent_dimensions"] = arb_res.get("divergent_dimensions", [])
+            resp["arb_trap_witness"] = arb_res.get("witness")
+            resp["viral_x_alert"] = arb_res.get("viral_x_alert")
+            if arb_res.get("mathematical_guarantee"):
+                resp["mathematical_guarantee"] = arb_res["mathematical_guarantee"]
+            resp["message"] += (
+                f" | Arb Trap Analysis: trap_detected={resp['arb_trap_detected']}, "
+                f"risk_grade={resp['risk_grade']}"
+            )
+
+        return resp
 
     def verify_zk_and_bitvec(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1923,11 +2056,101 @@ class ProverService:
             "message": message,
         }
 
-    def verify_crosschain_bridge_memo(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def verify_bridge_and_oracle(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handler 9: /x402/verify-crosschain-bridge-memo
-        Validates crosschain bridge memo format (THORChain / Maya Protocol).
+        Handler: /x402/verify-bridge-and-oracle (and /x402/verify-crosschain-bridge-memo)
+        Verifies crosschain bridge memo / oracle slippage AND multichain token invariants (OFT/NTT/CCIP).
+        Backward compatible: when 'memo' is passed without token_address, validates crosschain memo.
+        When 'token_address' or 'multichain_chains' is present, executes formal multichain token verification.
         """
+        has_token = any(
+            k in payload
+            for k in ("token_address", "multichain_chains", "chains_config", "token")
+        )
+        has_memo = "memo" in payload
+
+        resp: Dict[str, Any] = {}
+
+        if has_memo or not has_token:
+            resp = self._verify_crosschain_bridge_memo_internal(payload)
+            if not has_token:
+                return resp
+
+        token_addr = str(payload.get("token_address") or payload.get("token", "0x0000000000000000000000000000000000000000"))
+        home_chain = str(payload.get("chain") or payload.get("home_chain", "base")).lower()
+        standard = str(payload.get("standard", "OFT")).upper()
+        chains_config = payload.get("chains_config") or payload.get("multichain_chains")
+
+        if chains_config is not None:
+            if isinstance(chains_config, dict):
+                topology = {
+                    "token_address": token_addr,
+                    "home_chain": home_chain,
+                    "chains": chains_config.get("chains", chains_config),
+                }
+                if "declared_max_supply" in payload:
+                    topology["declared_max_supply"] = payload["declared_max_supply"]
+                elif "declared_max_supply" in chains_config:
+                    topology["declared_max_supply"] = chains_config["declared_max_supply"]
+            elif isinstance(chains_config, list):
+                if chains_config and isinstance(chains_config[0], dict):
+                    chains_dict = {item.get("chain", f"chain_{i}"): item for i, item in enumerate(chains_config)}
+                    topology = {
+                        "token_address": token_addr,
+                        "home_chain": home_chain,
+                        "chains": chains_dict,
+                    }
+                else:
+                    topology = discover_multichain_token_topology(
+                        token_address=token_addr,
+                        home_chain=home_chain,
+                        chains=[str(c) for c in chains_config],
+                    )
+            else:
+                topology = {"token_address": token_addr, "home_chain": home_chain, "chains": {}}
+
+            verification_res = verify_multichain_token_z3(topology)
+            report_res = build_eas_attestation_payload(verification_res)
+            audit_bundle = {
+                "topology": topology,
+                "verification": verification_res,
+                "report": report_res.get("report", {}),
+                "eas_attestation": report_res.get("eas_attestation", {}),
+            }
+        else:
+            declared_max = payload.get("declared_max_supply")
+            chains_list = payload.get("chains")
+            audit_bundle = audit_multichain_token(
+                token_address=token_addr,
+                home_chain=home_chain,
+                chains=chains_list,
+                declared_max_supply=declared_max,
+            )
+
+        token_audit = audit_bundle.get("verification", {})
+        eas_attest = audit_bundle.get("eas_attestation", {})
+
+        resp["multichain_token_audit"] = token_audit
+        resp["eas_attestation"] = eas_attest
+        resp["report"] = audit_bundle.get("report", {})
+
+        if not has_memo:
+            token_verified = token_audit.get("verdict_pass", True)
+            resp["verified"] = token_verified
+            resp["check_type"] = "multichain_token_and_bridge_oracle"
+            resp["status"] = token_audit.get("status", "VERIFIED_SAFE" if token_verified else "VERIFICATION_FAILED")
+            resp["message"] = (
+                f"Multichain token formal verification completed: status={resp['status']}, "
+                f"token={token_addr}, home_chain={home_chain}, standard={standard}"
+            )
+        else:
+            resp["multichain_token_verified"] = token_audit.get("verdict_pass", True)
+            resp["message"] += f" | Multichain Token: status={token_audit.get('status')}"
+
+        return resp
+
+    def _verify_crosschain_bridge_memo_internal(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal helper for bridge memo format validation."""
         memo = str(payload.get("memo", "")).strip()
         max_affiliate_bps = int(payload.get("max_affiliate_bps", 100))
         require_slippage_limit = bool(payload.get("require_slippage_limit", True))
@@ -1996,6 +2219,10 @@ class ProverService:
             "issues": issues,
             "message": message,
         }
+
+    def verify_crosschain_bridge_memo(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Backward-compatible entry point delegating to verify_bridge_and_oracle."""
+        return self.verify_bridge_and_oracle(payload)
 
     def verify_cardano_eutxo_conservation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -2566,7 +2793,7 @@ class ProverService:
                     "method": "POST",
                     "priceAtomic": str(self.config.price_polymarket_atomic),
                     "priceHuman": "$0.02 USDC",
-                    "description": "Formal verification of Polymarket NegRisk / CTF token solvency and Dutch-book net edge",
+                    "description": "Formal verification of Polymarket NegRisk / CTF token solvency and Dutch-book net edge, plus Kalshi Arb Trap resolution divergence",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -2578,8 +2805,11 @@ class ProverService:
                             "fee_bps": {"type": "integer", "default": 0},
                             "payout_per_share": {"type": "number", "default": 10000},
                             "custom_conversion_formula": {"type": ["string", "null"]},
+                            "polymarket_rules": {"type": "string", "description": "Raw resolution rules for Polymarket market"},
+                            "kalshi_rules": {"type": "string", "description": "Raw resolution rules for Kalshi market"},
+                            "polymarket_slug": {"type": "string", "description": "Polymarket market slug"},
+                            "kalshi_ticker": {"type": "string", "description": "Kalshi market ticker"},
                         },
-                        "required": ["outcome_ask_prices"],
                     },
                     "outputSchema": {
                         "type": "object",
@@ -2589,6 +2819,10 @@ class ProverService:
                             "arbitrage_edge_atomic": {"type": "integer"},
                             "total_basket_cost_atomic": {"type": "integer"},
                             "payout_per_share_atomic": {"type": "integer"},
+                            "arb_trap_detected": {"type": "boolean"},
+                            "risk_grade": {"type": "string"},
+                            "arb_trap_witness": {"type": ["object", "null"]},
+                            "viral_x_alert": {"type": ["string", "null"]},
                         },
                     },
                 },
@@ -2801,15 +3035,19 @@ class ProverService:
                     "method": "POST",
                     "priceAtomic": str(self.config.price_crosschain_memo_atomic),
                     "priceHuman": "$0.02 USDC",
-                    "description": "Crosschain bridge memo syntax, injection-prevention, and affiliate fee ceiling audit (THORChain/Maya)",
+                    "description": "Crosschain bridge memo syntax, injection-prevention, affiliate fee ceiling, and multichain token Z3 invariant verification (OFT/NTT/CCIP)",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "memo": {"type": "string"},
                             "max_affiliate_bps": {"type": "integer", "default": 100},
                             "require_slippage_limit": {"type": "boolean", "default": True},
+                            "token_address": {"type": "string", "description": "Token contract address on home chain"},
+                            "chain": {"type": "string", "description": "Home chain name (e.g. 'base')", "default": "base"},
+                            "standard": {"type": "string", "description": "Multichain token standard: OFT, NTT, CCIP", "default": "OFT"},
+                            "chains_config": {"type": "object", "description": "Offline chain topologies and peer maps"},
+                            "multichain_chains": {"type": "array", "items": {"type": "string"}, "description": "List of chain names to audit"},
                         },
-                        "required": ["memo"],
                     },
                     "outputSchema": {
                         "type": "object",
@@ -2823,6 +3061,8 @@ class ProverService:
                             "affiliate_bps": {"type": "integer"},
                             "issues": {"type": "array", "items": {"type": "string"}},
                             "message": {"type": "string"},
+                            "multichain_token_audit": {"type": ["object", "null"]},
+                            "eas_attestation": {"type": ["object", "null"]},
                         },
                     },
                 },

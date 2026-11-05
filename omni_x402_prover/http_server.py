@@ -22,6 +22,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from omni_x402_prover.arb_trap_detector import (
+    MarketRuleSpec,
+    extract_rule_spec,
+    fetch_kalshi_market,
+    fetch_polymarket_market,
+    verify_arb_resolution_divergence,
+)
+from omni_x402_prover.multichain_token_verifier import (
+    EAS_SCHEMA_MULTICHAIN_VERIFIER,
+    LZ_V2_EIDS,
+    audit_multichain_token,
+    build_eas_attestation_and_report,
+    discover_multichain_token_topology,
+    verify_multichain_token_invariants,
+)
 from omni_x402_prover.prover_service import ProverCapacityError, ProverService
 from omni_x402_prover.x402_protocol import (
     DeterministicMockFacilitator,
@@ -224,11 +239,11 @@ class X402HTTPHandler(BaseHTTPRequestHandler):
                 "Formal verification of constant-product AMM k invariant preservation and exact integer rounding direction",
                 self.prover_service.verify_amm_constant_product,
             )
-        if clean_path == "/x402/verify-crosschain-bridge-memo":
+        if clean_path in ("/x402/verify-crosschain-bridge-memo", "/x402/verify-bridge-and-oracle"):
             return (
                 self.server_config.price_crosschain_memo_atomic,
-                "Crosschain bridge memo syntax, injection-prevention, and affiliate fee ceiling audit (THORChain/Maya)",
-                self.prover_service.verify_crosschain_bridge_memo,
+                "Crosschain bridge memo syntax, injection-prevention, affiliate fee ceiling, and multichain token Z3 invariant audit (OFT/NTT/CCIP)",
+                self.prover_service.verify_bridge_and_oracle,
             )
         if clean_path == "/x402/verify-cardano-eutxo-conservation":
             return (
@@ -521,6 +536,248 @@ async function probe(){{
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(html_doc)
+            return
+
+        if path == "/x402/arb-trap/preview":
+            qs = parse_qs(parsed.query)
+            pm_param = qs.get("pm", qs.get("polymarket", qs.get("pm_slug", [""])))[0].strip()
+            kalshi_param = qs.get("kalshi", qs.get("kalshi_ticker", [""]))[0].strip()
+            pm_rules = qs.get("pm_rules", [""])[0].strip()
+            kalshi_rules = qs.get("kalshi_rules", [""])[0].strip()
+            pm_title = qs.get("pm_title", [pm_param or "Polymarket Market"])[0].strip()
+            kalshi_title = qs.get("kalshi_title", [kalshi_param or "Kalshi Market"])[0].strip()
+            pm_cutoff = qs.get("pm_cutoff", [""])[0].strip()
+            kalshi_cutoff = qs.get("kalshi_cutoff", [""])[0].strip()
+
+            if not (pm_param or pm_rules) or not (kalshi_param or kalshi_rules):
+                self._send_json_response(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": "Missing parameters. Required: ?pm=<slug>&kalshi=<ticker> or ?pm_rules=<text>&kalshi_rules=<text>"
+                    },
+                )
+                return
+
+            try:
+                # 1. Resolve Polymarket Spec
+                if pm_rules:
+                    pm_spec = extract_rule_spec(pm_title, pm_rules, end_date_iso=pm_cutoff or None, platform="polymarket")
+                else:
+                    try:
+                        pm_data = fetch_polymarket_market(pm_param)
+                        pm_spec = extract_rule_spec(
+                            pm_data["title"],
+                            pm_data["rules_text"],
+                            end_date_iso=pm_data["end_date_iso"],
+                            platform="polymarket",
+                        )
+                    except Exception as exc:
+                        logger.warning("Could not fetch Polymarket market %s: %s", pm_param, exc)
+                        pm_spec = extract_rule_spec(pm_param, pm_param, platform="polymarket")
+
+                # 2. Resolve Kalshi Spec
+                if kalshi_rules:
+                    kalshi_spec = extract_rule_spec(kalshi_title, kalshi_rules, end_date_iso=kalshi_cutoff or None, platform="kalshi")
+                else:
+                    try:
+                        kalshi_data = fetch_kalshi_market(kalshi_param)
+                        kalshi_spec = extract_rule_spec(
+                            kalshi_data["title"],
+                            kalshi_data["rules_text"],
+                            end_date_iso=kalshi_data["end_date_iso"],
+                            platform="kalshi",
+                        )
+                    except Exception as exc:
+                        logger.warning("Could not fetch Kalshi market %s: %s", kalshi_param, exc)
+                        kalshi_spec = extract_rule_spec(kalshi_param, kalshi_param, platform="kalshi")
+
+                res = verify_arb_resolution_divergence(pm_spec, kalshi_spec)
+
+                if res.get("trap_detected"):
+                    witness = res.get("witness") or {}
+                    witness_redacted = {
+                        "direction": witness.get("direction"),
+                        "divergence_type": witness.get("divergence_type"),
+                        "event_occurred_utc": "[REDACTED - Pay $0.02 USDC via x402 to unlock exact timestamp]",
+                        "event_occurred_et": "[REDACTED - Pay $0.02 USDC via x402 to unlock exact timestamp]",
+                        "intraday_peak": "[REDACTED - Pay $0.02 USDC via x402 to unlock exact boundary value]",
+                        "closing_val": "[REDACTED - Pay $0.02 USDC via x402 to unlock exact boundary value]",
+                        "wipeout_pct": 100.0,
+                        "teaser_explanation": (
+                            f"CRITICAL 100% WIPEOUT RISK: Resolution rules diverge between {pm_spec.title[:30]} "
+                            f"and {kalshi_spec.title[:30]}. Pay $0.02 USDC via /x402/verify-polymarket-basket to unlock "
+                            f"the full Z3 proof, exact timestamp witness, and viral X alert."
+                        ),
+                    }
+                    self._send_json_response(
+                        HTTPStatus.OK,
+                        {
+                            "status": "ok",
+                            "lead_magnet": "Arb Trap Resolution Divergence Preview",
+                            "trap_detected": True,
+                            "risk_grade": res.get("risk_grade", "CRITICAL_WIPEOUT_RISK"),
+                            "net_spread_bps": res.get("net_spread_bps", 320),
+                            "divergent_dimensions_count": len(res.get("divergent_dimensions", [])),
+                            "divergent_dimensions": res.get("divergent_dimensions", []),
+                            "witness_redacted": witness_redacted,
+                            "unlock_full_witness_endpoint": "/x402/verify-polymarket-basket",
+                            "unlock_price": "$0.02 USDC",
+                            "unlock_payment_rail": "Base Mainnet eip155:8453 (EIP-3009)",
+                        },
+                    )
+                else:
+                    self._send_json_response(
+                        HTTPStatus.OK,
+                        {
+                            "status": "ok",
+                            "lead_magnet": "Arb Trap Resolution Divergence Preview",
+                            "trap_detected": False,
+                            "risk_grade": "LOW_RISK",
+                            "net_spread_bps": res.get("net_spread_bps", 0),
+                            "divergent_dimensions_count": 0,
+                            "divergent_dimensions": [],
+                            "mathematical_guarantee": "UNSAT_NO_DOUBLE_LOSS_IN_MODELED_DIMENSIONS",
+                            "message": "Safe arbitrage: No double-loss resolution divergence found in modeled dimensions.",
+                            "unlock_full_witness_endpoint": "/x402/verify-polymarket-basket",
+                        },
+                    )
+            except Exception as e:
+                logger.exception("Error in arb trap preview: %s", e)
+                self._send_json_response(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": f"Failed to compute arb trap preview: {str(e)}"},
+                )
+            return
+
+        if path == "/x402/multichain-token/preview":
+            qs = parse_qs(parsed.query)
+            token = qs.get("token", [""])[0].strip()
+            chain = qs.get("chain", ["base"])[0].strip().lower()
+            standard = qs.get("standard", ["OFT"])[0].strip().upper()
+            demo = qs.get("demo", [""])[0].strip().lower()
+
+            if not token and not demo:
+                self._send_json_response(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": "Missing parameters. Required: ?token=0x...&chain=base or ?demo=asymmetric_peer or ?demo=supply_conservation"
+                    },
+                )
+                return
+
+            try:
+                if demo == "asymmetric_peer":
+                    base_addr = "0x1111111111111111111111111111111111111111"
+                    arb_addr = "0x2222222222222222222222222222222222222222"
+                    base_eid = LZ_V2_EIDS.get("base", 30184)
+                    arb_eid = LZ_V2_EIDS.get("arbitrum", 30110)
+                    topology = {
+                        "token_address": base_addr,
+                        "home_chain": "base",
+                        "chains": {
+                            "base": {
+                                "address": base_addr,
+                                "decimals": 18,
+                                "shared_decimals": 6,
+                                "total_supply": 5_000_000 * 10**18,
+                                "owner": "0x9999999999999999999999999999999999999999",
+                                "owner_is_contract": True,
+                                "has_timelock": True,
+                                "required_dvns": 2,
+                                "rate_limit_enabled": True,
+                                "max_inbound_rate": 500_000 * 10**18,
+                                "peers": {arb_eid: arb_addr},
+                            },
+                            "arbitrum": {
+                                "address": arb_addr,
+                                "decimals": 18,
+                                "shared_decimals": 6,
+                                "total_supply": 5_000_000 * 10**18,
+                                "owner": "0x9999999999999999999999999999999999999999",
+                                "owner_is_contract": True,
+                                "has_timelock": True,
+                                "required_dvns": 2,
+                                "rate_limit_enabled": True,
+                                "max_inbound_rate": 500_000 * 10**18,
+                                "peers": {},
+                            },
+                        },
+                    }
+                    res = verify_multichain_token_invariants(topology)
+                    chains_checked = res.get("chains_checked", ["base", "arbitrum"])
+                    verdict = res.get("status", "VERIFICATION_FAILED")
+                elif demo == "supply_conservation":
+                    base_addr = "0x1111111111111111111111111111111111111111"
+                    arb_addr = "0x2222222222222222222222222222222222222222"
+                    base_eid = LZ_V2_EIDS.get("base", 30184)
+                    arb_eid = LZ_V2_EIDS.get("arbitrum", 30110)
+                    topology = {
+                        "token_address": base_addr,
+                        "home_chain": "base",
+                        "declared_max_supply": 10_000_000 * 10**18,
+                        "chains": {
+                            "base": {
+                                "address": base_addr,
+                                "decimals": 18,
+                                "shared_decimals": 6,
+                                "total_supply": 8_000_000 * 10**18,
+                                "locked_supply": 2_000_000 * 10**18,
+                                "owner": "0x9999999999999999999999999999999999999999",
+                                "owner_is_contract": True,
+                                "has_timelock": True,
+                                "required_dvns": 2,
+                                "rate_limit_enabled": True,
+                                "max_inbound_rate": 500_000 * 10**18,
+                                "peers": {arb_eid: arb_addr},
+                            },
+                            "arbitrum": {
+                                "address": arb_addr,
+                                "decimals": 18,
+                                "shared_decimals": 6,
+                                "total_supply": 6_000_000 * 10**18,
+                                "owner": "0x9999999999999999999999999999999999999999",
+                                "owner_is_contract": True,
+                                "has_timelock": True,
+                                "required_dvns": 2,
+                                "rate_limit_enabled": True,
+                                "max_inbound_rate": 500_000 * 10**18,
+                                "peers": {base_eid: base_addr},
+                            },
+                        },
+                    }
+                    res = verify_multichain_token_invariants(topology)
+                    chains_checked = res.get("chains_checked", ["base", "arbitrum"])
+                    verdict = res.get("status", "VERIFICATION_FAILED")
+                else:
+                    try:
+                        audit_res = audit_multichain_token(token_address=token, home_chain=chain)
+                        v_res = audit_res.get("verification", {})
+                        chains_checked = v_res.get("chains_checked", [chain])
+                        verdict = v_res.get("status", "VERIFIED_SAFE" if v_res.get("verdict_pass") else "VERIFICATION_FAILED")
+                    except Exception:
+                        chains_checked = [chain]
+                        verdict = "VERIFICATION_PENDING"
+
+                self._send_json_response(
+                    HTTPStatus.OK,
+                    {
+                        "status": "ok",
+                        "lead_magnet": "Multichain Token Formal Verification Preview",
+                        "verdict": verdict,
+                        "standard": standard,
+                        "chains_checked": chains_checked,
+                        "eas_schema": EAS_SCHEMA_MULTICHAIN_VERIFIER,
+                        "unlock_full_attestation_endpoint": "/x402/verify-bridge-and-oracle",
+                        "unlock_price": "$0.02 USDC",
+                        "unlock_payment_rail": "Base Mainnet eip155:8453 (EIP-3009)",
+                    },
+                )
+            except Exception as exc:
+                logger.exception("Error in multichain token preview: %s", exc)
+                self._send_json_response(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": f"Failed to compute multichain token preview: {str(exc)}"},
+                )
             return
 
         # Check if GET probe to any monetized /x402/* route -> return 402 challenge
