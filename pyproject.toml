@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omni-x402-prover"
+version = "2.2.0"
+description = "Production-grade x402 v1/v2 Pay-Per-Proof Formal Z3 Verification HTTP + MCP Server on Base (16 Endpoints)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Omni Money Suite Team"}
+]
+keywords = [
+    "x402",
+    "coinbase-bazaar",
+    "mcp",
+    "model-context-protocol",
+    "base",
+    "usdc",
+    "z3",
+    "formal-verification",
+    "micropayments",
+    "non-custodial",
+    "x402scan",
+    "smithery",
+    "glama",
+    "agentcash",
+    "defi-security",
+    "polymarket",
+    "cardano",
+    "sar",
+    "ed25519"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography"
+]
+dependencies = []
+
+[project.optional-dependencies]
+cdp = ["cryptography>=41.0.0"]
+
+[project.urls]
+Homepage = "https://gateway.stealthmark.io/x402/catalog"
+Documentation = "https://gateway.stealthmark.io/llms.txt"
+Repository = "https://github.com/stealthmark-io/omni-x402-prover"
+OpenAPI = "https://gateway.stealthmark.io/openapi.json"
+x402scan_StealthMark = "https://www.x402scan.com/server/4f613c20-a216-4742-be54-8cd621415701"
+x402scan_OceanEye = "https://www.x402scan.com/server/f2245b59-82c5-46ae-bb13-d88836d7910f"
+
+[project.scripts]
+omni-x402-http = "omni_x402_prover.http_server:main"
+omni-x402-mcp = "omni_x402_prover.mcp_server:main"

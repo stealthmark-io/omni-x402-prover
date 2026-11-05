@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "omni-x402-prover": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "omni_x402_prover.mcp_server"
+      ],
+      "env": {
+        "X402_PAY_TO_ADDRESS": "0xc8dc4ecb93c4c665Fad07E1261F5f7D60e3C6E0F",
+        "X402_NETWORK": "base",
+        "X402_ASSET_ADDRESS": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "X402_FACILITATOR_URL": "https://facilitator.payai.network"
+      }
+    }
+  }
+}

@@ -1,0 +1,105 @@
+name: omni-x402-prover
+version: 1.0.0
+description: "Production-grade formal verification pay-per-proof MCP server on Base. Autonomous AI agents pay USDC micropayments per formal Z3 proof of DeFi vaults, Polymarket solvency, ZK circuits, and differential consensus."
+homepage: "https://gateway.stealthmark.io"
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      X402_PAY_TO_ADDRESS:
+        type: string
+        default: "0xc8dc4ecb93c4c665Fad07E1261F5f7D60e3C6E0F"
+        description: "Base EVM address to receive USDC micropayments per formal proof"
+      X402_NETWORK:
+        type: string
+        default: "base"
+        description: "Target EVM network: 'base' (mainnet) or 'base-sepolia'"
+      X402_ASSET_ADDRESS:
+        type: string
+        default: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        description: "USDC contract address on Base"
+      X402_FACILITATOR_URL:
+        type: string
+        default: "https://facilitator.payai.network"
+        description: "x402 facilitator endpoint for on-chain settlement"
+      X402_FACILITATOR_BEARER_TOKEN:
+        type: string
+        description: "Optional static Bearer token for custom primary facilitators (never sent to Coinbase CDP; use CDP_API_KEY_ID + CDP_API_KEY_SECRET for CDP per-request JWT signing)"
+      CDP_API_KEY_ID:
+        type: string
+        description: "Optional Coinbase CDP API Key ID for per-request JWT signing on https://*.coinbase.com facilitators"
+      CDP_API_KEY_SECRET:
+        type: string
+        description: "Optional Coinbase CDP API Key Secret (Ed25519 base64 or EC P-256 PEM) for per-request JWT signing"
+      X402_MOCK_FACILITATOR:
+        type: string
+        default: "0"
+        description: "Set to 1 for offline testing/demo mode without on-chain settlement"
+  commandFunction: |-
+    (config) => ({
+      command: "python",
+      args: ["-m", "omni_x402_prover.mcp_server"],
+      env: {
+        ...(config.X402_PAY_TO_ADDRESS ? { X402_PAY_TO_ADDRESS: config.X402_PAY_TO_ADDRESS } : {}),
+        ...(config.X402_NETWORK ? { X402_NETWORK: config.X402_NETWORK } : {}),
+        ...(config.X402_ASSET_ADDRESS ? { X402_ASSET_ADDRESS: config.X402_ASSET_ADDRESS } : {}),
+        ...(config.X402_FACILITATOR_URL ? { X402_FACILITATOR_URL: config.X402_FACILITATOR_URL } : {}),
+        ...(config.X402_FACILITATOR_BEARER_TOKEN ? { X402_FACILITATOR_BEARER_TOKEN: config.X402_FACILITATOR_BEARER_TOKEN } : {}),
+        ...(config.CDP_API_KEY_ID ? { CDP_API_KEY_ID: config.CDP_API_KEY_ID } : {}),
+        ...(config.CDP_API_KEY_SECRET ? { CDP_API_KEY_SECRET: config.CDP_API_KEY_SECRET } : {}),
+        ...(config.X402_MOCK_FACILITATOR !== undefined ? { X402_MOCK_FACILITATOR: String(config.X402_MOCK_FACILITATOR) } : {})
+      }
+    })
+tools:
+  - name: x402_bazaar_catalog
+    endpoint: /.well-known/x402-bazaar.json
+    description: "Discover all 16 paid formal verification tools, Base USDC pricing, and HTTP endpoints"
+  - name: x402_verify_vault_rounding
+    endpoint: /x402/verify-vault-and-rounding
+    description: "Formal Z3 verification of ERC-4626 / Euler vault share rounding & zero-share inflation attacks"
+  - name: x402_verify_polymarket_basket
+    endpoint: /x402/verify-polymarket-basket
+    description: "Formal verification of Polymarket NegRisk / CTF token solvency and Dutch-book net edge"
+  - name: x402_verify_zk_or_bitvec
+    endpoint: /x402/verify-zk-and-bitvec
+    description: "Formal Z3 verification of ZK witness uniqueness or BitVector integer cast truncation"
+  - name: x402_verify_differential_spec
+    endpoint: /x402/verify-differential-spec
+    description: "Differential equivalence verification between code_a and code_b across boundary grids"
+  - name: x402_verify_forensic_graph
+    endpoint: /x402/verify-forensic-graph
+    description: "On-chain and PSP forensic graph engine: Tarjan cyclic loop collapse, Jupiter Lend receipt handover, bridge hop correlation, and taint propagation"
+  - name: x402_verify_ast_blast_radius
+    endpoint: /x402/verify-ast-blast-radius
+    description: "Deterministic 2-hop AST call-graph blast-radius and upstream-to-fork patch-gap readiness verification"
+  - name: x402_verify_erc4626_inflation_guard
+    endpoint: /x402/verify-erc4626-inflation-guard
+    description: "Formal verification of ERC-4626 vault virtual share offset and zero-share inflation attack prevention"
+  - name: x402_verify_amm_constant_product
+    endpoint: /x402/verify-amm-constant-product
+    description: "Formal verification of constant-product AMM k invariant preservation and exact integer rounding direction"
+  - name: x402_verify_crosschain_bridge_memo
+    endpoint: /x402/verify-crosschain-bridge-memo
+    description: "Crosschain bridge memo syntax, injection-prevention, and affiliate fee ceiling audit (THORChain/Maya)"
+  - name: x402_verify_cardano_eutxo_conservation
+    endpoint: /x402/verify-cardano-eutxo-conservation
+    description: "Cardano eUTxO value conservation, multi-asset balance, minUTxO compliance, and Plutus double satisfaction audit"
+  - name: x402_verify_mev_sandwich_bound
+    endpoint: /x402/verify-mev-sandwich-bound
+    description: "Analytical binary-search MEV sandwich profitability bound and optimal frontrun/backrun impact verification"
+  - name: x402_verify_permit2_signature_scope
+    endpoint: /x402/verify-permit2-signature-scope
+    description: "Pre-signing audit for Uniswap Permit2 allowance signatures: unlimited approval, expiration, deadline, and spender"
+  - name: x402_verify_liquidation_waterfall
+    endpoint: /x402/verify-liquidation-waterfall
+    description: "Lending market liquidation solvency audit: health factor, close factor, bonus insolvency cap, and bad debt shortfall"
+  - name: x402_verify_merkle_airdrop_claim
+    endpoint: /x402/verify-merkle-airdrop-claim
+    description: "Merkle airdrop distribution integrity: double-hash preimage resistance, duplicate claim elimination, and canonical root"
+  - name: x402_verify_fiat_crypto_otc_settlement
+    endpoint: /x402/verify-fiat-crypto-otc-settlement
+    description: "Fiat-to-crypto OTC settlement reconciliation: cross-currency FX spread verification, skimming check, and CMP-PSAV certificate"
+  - name: x402_verify_sar_ed25519_dossier
+    endpoint: /x402/verify-sar-ed25519-dossier
+    description: "Synthetic Aperture Radar (SAR) IUU dark-vessel detection, EEZ territorial intrusion, and Ed25519 RFC 8032 canonical dossier audit"

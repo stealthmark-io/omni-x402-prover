@@ -1,0 +1,134 @@
+{
+  "$schema": "https://glama.ai/mcp/schema/v1",
+  "name": "omni-x402-prover",
+  "description": "Production-grade formal verification pay-per-proof MCP server on Base. Autonomous AI agents pay USDC micropayments per formal Z3 proof of DeFi vaults, Polymarket solvency, ZK circuits, and differential consensus.",
+  "homepage": "https://gateway.stealthmark.io",
+  "servers": [
+    "https://gateway.stealthmark.io",
+    "https://sentinel.oceaneye-ai.com"
+  ],
+  "x402scan": [
+    "https://www.x402scan.com/server/4f613c20-a216-4742-be54-8cd621415701",
+    "https://www.x402scan.com/server/f2245b59-82c5-46ae-bb13-d88836d7910f"
+  ],
+  "tools": [
+    {
+      "name": "x402_bazaar_catalog",
+      "description": "Discover all paid formal verification tools, Base USDC pricing, and HTTP endpoints",
+      "endpoint": "/.well-known/x402-bazaar.json",
+      "priceHuman": "Free"
+    },
+    {
+      "name": "x402_verify_vault_rounding",
+      "description": "Formal Z3 verification of ERC-4626 / Euler vault share rounding & zero-share inflation attacks",
+      "endpoint": "/x402/verify-vault-and-rounding",
+      "priceHuman": "$0.02 USDC",
+      "priceAtomic": "20000"
+    },
+    {
+      "name": "x402_verify_polymarket_basket",
+      "description": "Formal verification of Polymarket NegRisk / CTF token solvency and Dutch-book net edge",
+      "endpoint": "/x402/verify-polymarket-basket",
+      "priceHuman": "$0.02 USDC",
+      "priceAtomic": "20000"
+    },
+    {
+      "name": "x402_verify_zk_or_bitvec",
+      "description": "Formal Z3 verification of ZK witness uniqueness or BitVector integer cast truncation",
+      "endpoint": "/x402/verify-zk-and-bitvec",
+      "priceHuman": "$0.03 USDC",
+      "priceAtomic": "30000"
+    },
+    {
+      "name": "x402_verify_differential_spec",
+      "description": "Differential equivalence verification between code_a and code_b across boundary grids",
+      "endpoint": "/x402/verify-differential-spec",
+      "priceHuman": "$0.05 USDC",
+      "priceAtomic": "50000"
+    },
+    {
+      "name": "x402_verify_forensic_graph",
+      "description": "On-chain and PSP forensic graph engine: Tarjan cyclic loop collapse, Jupiter Lend receipt handover, bridge hop correlation, and taint propagation",
+      "endpoint": "/x402/verify-forensic-graph",
+      "priceHuman": "$0.05 USDC",
+      "priceAtomic": "50000"
+    },
+    {
+      "name": "x402_verify_ast_blast_radius",
+      "description": "Deterministic 2-hop AST call-graph blast-radius and upstream-to-fork patch-gap readiness verification",
+      "endpoint": "/x402/verify-ast-blast-radius",
+      "priceHuman": "$0.03 USDC",
+      "priceAtomic": "30000"
+    },
+    {
+      "name": "x402_verify_erc4626_inflation_guard",
+      "description": "Formal verification of ERC-4626 vault virtual share offset and zero-share inflation attack prevention",
+      "endpoint": "/x402/verify-erc4626-inflation-guard",
+      "priceHuman": "$0.03 USDC",
+      "priceAtomic": "30000"
+    },
+    {
+      "name": "x402_verify_amm_constant_product",
+      "description": "Formal verification of constant-product AMM k invariant preservation and exact integer rounding direction",
+      "endpoint": "/x402/verify-amm-constant-product",
+      "priceHuman": "$0.03 USDC",
+      "priceAtomic": "30000"
+    },
+    {
+      "name": "x402_verify_crosschain_bridge_memo",
+      "description": "Crosschain bridge memo syntax, injection-prevention, and affiliate fee ceiling audit (THORChain/Maya)",
+      "endpoint": "/x402/verify-crosschain-bridge-memo",
+      "priceHuman": "$0.02 USDC",
+      "priceAtomic": "20000"
+    },
+    {
+      "name": "x402_verify_cardano_eutxo_conservation",
+      "description": "Cardano eUTxO value conservation, multi-asset balance, minUTxO compliance, and Plutus double satisfaction audit",
+      "endpoint": "/x402/verify-cardano-eutxo-conservation",
+      "priceHuman": "$0.03 USDC",
+      "priceAtomic": "30000"
+    },
+    {
+      "name": "x402_verify_mev_sandwich_bound",
+      "description": "Analytical binary-search MEV sandwich profitability bound and optimal frontrun/backrun impact verification",
+      "endpoint": "/x402/verify-mev-sandwich-bound",
+      "priceHuman": "$0.02 USDC",
+      "priceAtomic": "20000"
+    },
+    {
+      "name": "x402_verify_permit2_signature_scope",
+      "description": "Pre-signing audit for Uniswap Permit2 allowance signatures: unlimited approval, expiration, deadline, and spender",
+      "endpoint": "/x402/verify-permit2-signature-scope",
+      "priceHuman": "$0.02 USDC",
+      "priceAtomic": "20000"
+    },
+    {
+      "name": "x402_verify_liquidation_waterfall",
+      "description": "Lending market liquidation solvency audit: health factor, close factor, bonus insolvency cap, and bad debt shortfall",
+      "endpoint": "/x402/verify-liquidation-waterfall",
+      "priceHuman": "$0.04 USDC",
+      "priceAtomic": "40000"
+    },
+    {
+      "name": "x402_verify_merkle_airdrop_claim",
+      "description": "Merkle airdrop distribution integrity: double-hash preimage resistance, duplicate claim elimination, and canonical root",
+      "endpoint": "/x402/verify-merkle-airdrop-claim",
+      "priceHuman": "$0.02 USDC",
+      "priceAtomic": "20000"
+    },
+    {
+      "name": "x402_verify_fiat_crypto_otc_settlement",
+      "description": "Fiat-to-crypto OTC settlement reconciliation: cross-currency FX spread verification, skimming check, and CMP-PSAV certificate",
+      "endpoint": "/x402/verify-fiat-crypto-otc-settlement",
+      "priceHuman": "$0.05 USDC",
+      "priceAtomic": "50000"
+    },
+    {
+      "name": "x402_verify_sar_ed25519_dossier",
+      "description": "Synthetic Aperture Radar (SAR) IUU dark-vessel detection, EEZ territorial intrusion, and Ed25519 RFC 8032 canonical dossier audit",
+      "endpoint": "/x402/verify-sar-ed25519-dossier",
+      "priceHuman": "$0.05 USDC",
+      "priceAtomic": "50000"
+    }
+  ]
+}

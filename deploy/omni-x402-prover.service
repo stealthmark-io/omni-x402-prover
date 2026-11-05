@@ -1,0 +1,64 @@
+# /etc/systemd/system/omni-x402-prover.service
+[Unit]
+Description=omni-x402-prover (x402 verification prover, listens on 127.0.0.1:8402, proxied by stealthmark-gateway)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=hermes001
+Group=hermes001
+WorkingDirectory=/home/hermes001/regalo-asi-repo/omni-x402-prover
+Environment=PYTHONPATH=/home/hermes001/regalo-asi-repo/omni-x402-prover:/home/hermes001/regalo-asi-repo/regalo-asi
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ExecStart=/home/hermes001/OceanEye-hackaton-meta/backend/.venv/bin/python -P -m omni_x402_prover.http_server --host 127.0.0.1 --port 8402
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+SyslogIdentifier=omni-x402-prover
+
+# Keep Hermes ahead of this one under pressure (same policy as stealthmark-gateway).
+Nice=5
+CPUWeight=50
+IOWeight=50
+OOMScoreAdjust=500
+MemoryHigh=1536M
+MemoryMax=2G
+TasksMax=256
+LimitNOFILE=8192
+LimitCORE=0
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+
+# Sandbox: read-only system, only the two source trees and the venv visible under /home, no /opt, no metadata/private ranges.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=/home/hermes001/regalo-asi-repo/omni-x402-prover /home/hermes001/regalo-asi-repo/regalo-asi /home/hermes001/OceanEye-hackaton-meta/backend/.venv
+TemporaryFileSystem=/opt:ro
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+IPAddressDeny=169.254.0.0/16 fd20:ce::254/128 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+[Install]
+WantedBy=multi-user.target

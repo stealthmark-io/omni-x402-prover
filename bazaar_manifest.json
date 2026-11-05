@@ -1,0 +1,1200 @@
+{
+  "x402Version": 1,
+  "supportedVersions": [
+    1,
+    2
+  ],
+  "catalogVersion": "1.0.0",
+  "name": "omni-x402-prover",
+  "title": "Omni x402 Formal Invariant Prover",
+  "description": "Production-grade formal verification pay-per-proof server on Base. Autonomous AI agents pay USDC micropayments per formal Z3 proof of DeFi vaults, Polymarket solvency, ZK circuits, and differential consensus.",
+  "provider": {
+    "name": "Omni Money Suite",
+    "network": "base",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "payTo": "0xc8dc4ecb93c4c665Fad07E1261F5f7D60e3C6E0F",
+    "assetSymbol": "USDC",
+    "assetDecimals": 6
+  },
+  "endpoints": [
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-vault-and-rounding",
+      "method": "POST",
+      "priceAtomic": "20000",
+      "priceHuman": "$0.02 USDC",
+      "description": "Formal Z3 verification of ERC-4626 / Euler vault share rounding & zero-share inflation attacks",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "deposit_fn_code": {
+            "type": "string",
+            "description": "Python/AST code for preview_deposit"
+          },
+          "redeem_fn_code": {
+            "type": "string",
+            "description": "Python/AST code for preview_redeem"
+          },
+          "max_assets": {
+            "type": "integer",
+            "default": 10000
+          },
+          "max_shares": {
+            "type": "integer",
+            "default": 10000
+          },
+          "check_zero_share_mint": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "deposit_fn_code",
+          "redeem_fn_code"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "solver_mode": {
+            "type": "string"
+          },
+          "counterexample": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-polymarket-basket",
+      "method": "POST",
+      "priceAtomic": "20000",
+      "priceHuman": "$0.02 USDC",
+      "description": "Formal verification of Polymarket NegRisk / CTF token solvency and Dutch-book net edge",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "outcome_ask_prices": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "List of best ask prices across all basket outcomes"
+          },
+          "fee_bps": {
+            "type": "integer",
+            "default": 0
+          },
+          "payout_per_share": {
+            "type": "number",
+            "default": 10000
+          },
+          "custom_conversion_formula": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "outcome_ask_prices"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "dutch_book_edge_detected": {
+            "type": "boolean"
+          },
+          "arbitrage_edge_atomic": {
+            "type": "integer"
+          },
+          "total_basket_cost_atomic": {
+            "type": "integer"
+          },
+          "payout_per_share_atomic": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-zk-and-bitvec",
+      "method": "POST",
+      "priceAtomic": "30000",
+      "priceHuman": "$0.03 USDC",
+      "description": "Formal Z3 verification of ZK witness uniqueness or BitVector integer cast truncation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "zk",
+              "bitvec"
+            ]
+          },
+          "expr": {
+            "type": "string"
+          },
+          "var_bitwidths": {
+            "type": "object"
+          },
+          "target_bitwidth": {
+            "type": "integer"
+          },
+          "public_inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "witness_vars": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "output_var": {
+            "type": "string"
+          },
+          "constraints_exprs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "solver_mode": {
+            "type": "string"
+          },
+          "counterexample": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-differential-spec",
+      "method": "POST",
+      "priceAtomic": "50000",
+      "priceHuman": "$0.05 USDC",
+      "description": "Differential equivalence verification between code_a and code_b across boundary grids",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "code_a": {
+            "type": "string"
+          },
+          "code_b": {
+            "type": "string"
+          },
+          "arg_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fuzz_iterations": {
+            "type": "integer",
+            "default": 256
+          },
+          "seed": {
+            "type": "integer",
+            "default": 42
+          }
+        },
+        "required": [
+          "code_a",
+          "code_b",
+          "arg_names"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "equivalent": {
+            "type": "boolean"
+          },
+          "solver_mode": {
+            "type": "string"
+          },
+          "checked_cases": {
+            "type": "integer"
+          },
+          "divergence": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-forensic-graph",
+      "method": "POST",
+      "priceAtomic": "50000",
+      "priceHuman": "$0.05 USDC",
+      "description": "On-chain and PSP forensic graph engine: Tarjan cyclic loop collapse, Jupiter Lend receipt handover, bridge hop correlation, and taint propagation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transactions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "List of transaction edges"
+          },
+          "tainted_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Seed exploit or tainted wallet addresses"
+          },
+          "protocol_nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Known protocol/vault/bridge nodes excluded from cyclic collapse"
+          },
+          "bridge_nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Privacy bridge/swap nodes for entry-exit correlation"
+          },
+          "max_window_seconds": {
+            "type": "integer",
+            "default": 259200
+          },
+          "amount_tolerance": {
+            "type": "number",
+            "default": 0.05
+          },
+          "bridge_max_window_seconds": {
+            "type": "integer",
+            "default": 7200
+          },
+          "bridge_fee_tolerance": {
+            "type": "number",
+            "default": 0.05
+          },
+          "task": {
+            "type": "object",
+            "description": "Optional SwarmTaskV2 payload"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "receipt_links_resolved": {
+            "type": "integer"
+          },
+          "privacy_bridge_links_resolved": {
+            "type": "integer"
+          },
+          "cyclic_clusters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "node_to_cluster": {
+            "type": "object"
+          },
+          "dag_edges": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "taint_scores": {
+            "type": "object"
+          },
+          "high_risk_protocol_exits": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-ast-blast-radius",
+      "method": "POST",
+      "priceAtomic": "30000",
+      "priceHuman": "$0.03 USDC",
+      "description": "Deterministic 2-hop AST call-graph blast-radius and upstream-to-fork patch-gap readiness verification",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "patch_text": {
+            "type": "string",
+            "description": "Unified git diff of the patch"
+          },
+          "modified_symbols": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Explicit list of modified symbol names"
+          },
+          "graph_data": {
+            "type": "object",
+            "description": "NetworkX/Graphify node-link format graph data"
+          },
+          "source_code": {
+            "type": "string",
+            "description": "Python source code to extract call-graph from"
+          },
+          "fork_code": {
+            "type": "string",
+            "description": "Fork repository source code"
+          },
+          "upstream_patch_spec": {
+            "type": "object",
+            "description": "Upstream security patch specification"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "modified_symbols": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "one_hop_callers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "one_hop_callees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "two_hop_callers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "two_hop_callees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blast_radius_score": {
+            "type": "integer"
+          },
+          "patch_gap_report": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-erc4626-inflation-guard",
+      "method": "POST",
+      "priceAtomic": "30000",
+      "priceHuman": "$0.03 USDC",
+      "description": "Formal verification of ERC-4626 vault virtual share offset and zero-share inflation attack prevention",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "virtual_shares_offset": {
+            "type": "integer",
+            "default": 0
+          },
+          "virtual_assets_offset": {
+            "type": "integer",
+            "default": 0
+          },
+          "attacker_initial_deposit": {
+            "type": "integer",
+            "default": 1
+          },
+          "attacker_donation": {
+            "type": "integer",
+            "default": 10000
+          },
+          "victim_deposit": {
+            "type": "integer",
+            "default": 9999
+          },
+          "deposit_fn_code": {
+            "type": "string"
+          },
+          "redeem_fn_code": {
+            "type": "string"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "solver_mode": {
+            "type": "string"
+          },
+          "inflation_vulnerable": {
+            "type": "boolean"
+          },
+          "victim_shares_minted": {
+            "type": "integer"
+          },
+          "min_donation_for_zero_shares": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recommended_virtual_offset": {
+            "type": "integer"
+          },
+          "counterexample": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-amm-constant-product",
+      "method": "POST",
+      "priceAtomic": "30000",
+      "priceHuman": "$0.03 USDC",
+      "description": "Formal verification of constant-product AMM k invariant preservation and exact integer rounding direction",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reserve_x": {
+            "type": "integer"
+          },
+          "reserve_y": {
+            "type": "integer"
+          },
+          "amount_in": {
+            "type": "integer"
+          },
+          "amount_out": {
+            "type": "integer"
+          },
+          "fee_bps": {
+            "type": "integer",
+            "default": 30
+          },
+          "rounding_direction": {
+            "type": "string",
+            "enum": [
+              "down",
+              "up"
+            ],
+            "default": "down"
+          }
+        },
+        "required": [
+          "reserve_x",
+          "reserve_y"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "solver_mode": {
+            "type": "string"
+          },
+          "k_before": {
+            "type": "integer"
+          },
+          "k_after": {
+            "type": "integer"
+          },
+          "max_valid_amount_out": {
+            "type": "integer"
+          },
+          "invariant_violated": {
+            "type": "boolean"
+          },
+          "counterexample": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-crosschain-bridge-memo",
+      "method": "POST",
+      "priceAtomic": "20000",
+      "priceHuman": "$0.02 USDC",
+      "description": "Crosschain bridge memo syntax, injection-prevention, and affiliate fee ceiling audit (THORChain/Maya)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "memo": {
+            "type": "string"
+          },
+          "max_affiliate_bps": {
+            "type": "integer",
+            "default": 100
+          },
+          "require_slippage_limit": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "memo"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "target_asset": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "limit_atomic": {
+            "type": "integer"
+          },
+          "affiliate_bps": {
+            "type": "integer"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-cardano-eutxo-conservation",
+      "method": "POST",
+      "priceAtomic": "30000",
+      "priceHuman": "$0.03 USDC",
+      "description": "Cardano eUTxO value conservation, multi-asset balance, minUTxO compliance, and Plutus double satisfaction audit",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "minted": {
+            "type": "object"
+          },
+          "fee_lovelace": {
+            "type": "integer",
+            "default": 200000
+          },
+          "min_utxo_lovelace": {
+            "type": "integer",
+            "default": 1000000
+          }
+        },
+        "required": [
+          "inputs",
+          "outputs"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "lovelace_conserved": {
+            "type": "boolean"
+          },
+          "native_assets_conserved": {
+            "type": "boolean"
+          },
+          "min_utxo_respected": {
+            "type": "boolean"
+          },
+          "double_satisfaction_risk": {
+            "type": "boolean"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-mev-sandwich-bound",
+      "method": "POST",
+      "priceAtomic": "20000",
+      "priceHuman": "$0.02 USDC",
+      "description": "Analytical binary-search MEV sandwich profitability bound and optimal frontrun/backrun impact verification",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reserve_in": {
+            "type": "integer"
+          },
+          "reserve_out": {
+            "type": "integer"
+          },
+          "user_amount_in": {
+            "type": "integer"
+          },
+          "slippage_bps": {
+            "type": "integer",
+            "default": 100
+          },
+          "fee_bps": {
+            "type": "integer",
+            "default": 30
+          },
+          "attacker_gas_cost_in": {
+            "type": "integer",
+            "default": 0
+          }
+        },
+        "required": [
+          "reserve_in",
+          "reserve_out",
+          "user_amount_in"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "expected_user_out": {
+            "type": "integer"
+          },
+          "user_min_out": {
+            "type": "integer"
+          },
+          "optimal_frontrun_in": {
+            "type": "integer"
+          },
+          "victim_sandwiched_out": {
+            "type": "integer"
+          },
+          "attacker_gross_profit_in": {
+            "type": "integer"
+          },
+          "attacker_net_profit_in": {
+            "type": "integer"
+          },
+          "sandwich_profitable": {
+            "type": "boolean"
+          },
+          "recommended_max_slippage_bps": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-permit2-signature-scope",
+      "method": "POST",
+      "priceAtomic": "20000",
+      "priceHuman": "$0.02 USDC",
+      "description": "Pre-signing audit for Uniswap Permit2 allowance signatures: unlimited approval, expiration, deadline, and spender",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spender": {
+            "type": "string"
+          },
+          "amount": {
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "expiration": {
+            "type": "integer"
+          },
+          "sig_deadline": {
+            "type": "integer"
+          },
+          "chain_id": {
+            "type": "integer",
+            "default": 8453
+          },
+          "current_timestamp": {
+            "type": "integer"
+          },
+          "max_requested_amount": {
+            "type": "integer"
+          },
+          "trusted_spenders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "spender",
+          "amount",
+          "expiration",
+          "sig_deadline"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "unlimited_approval": {
+            "type": "boolean"
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "spender": {
+            "type": "string"
+          },
+          "chain_id": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-liquidation-waterfall",
+      "method": "POST",
+      "priceAtomic": "40000",
+      "priceHuman": "$0.04 USDC",
+      "description": "Lending market liquidation solvency audit: health factor, close factor, bonus insolvency cap, and bad debt shortfall",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collateral_value": {
+            "type": "integer"
+          },
+          "debt_value": {
+            "type": "integer"
+          },
+          "liquidation_threshold_bps": {
+            "type": "integer",
+            "default": 8500
+          },
+          "liquidation_bonus_bps": {
+            "type": "integer",
+            "default": 500
+          },
+          "close_factor_bps": {
+            "type": "integer",
+            "default": 5000
+          },
+          "insurance_fund_balance": {
+            "type": "integer",
+            "default": 0
+          }
+        },
+        "required": [
+          "collateral_value",
+          "debt_value"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "health_factor_bps": {
+            "type": "integer"
+          },
+          "liquidatable": {
+            "type": "boolean"
+          },
+          "repaid_debt": {
+            "type": "integer"
+          },
+          "seized_collateral": {
+            "type": "integer"
+          },
+          "bad_debt_remaining": {
+            "type": "integer"
+          },
+          "insurance_fund_sufficient": {
+            "type": "boolean"
+          },
+          "socialized_loss": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-merkle-airdrop-claim",
+      "method": "POST",
+      "priceAtomic": "20000",
+      "priceHuman": "$0.02 USDC",
+      "description": "Merkle airdrop distribution integrity: double-hash preimage resistance, duplicate claim elimination, and canonical root",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "claims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "account": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "amount": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "account",
+                "amount"
+              ]
+            }
+          },
+          "leaf_hash_mode": {
+            "type": "string",
+            "enum": [
+              "double_hash",
+              "single_hash",
+              "raw_64_bytes"
+            ],
+            "default": "double_hash"
+          }
+        },
+        "required": [
+          "claims"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "second_preimage_vulnerable": {
+            "type": "boolean"
+          },
+          "duplicate_claims": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "total_airdrop_atomic": {
+            "type": "integer"
+          },
+          "computed_merkle_root": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-fiat-crypto-otc-settlement",
+      "method": "POST",
+      "priceAtomic": "50000",
+      "priceHuman": "$0.05 USDC",
+      "description": "Fiat-to-crypto OTC settlement reconciliation: cross-currency FX spread verification, skimming check, and CMP-PSAV certificate",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fiat_legs": {
+            "type": "array",
+            "items": {
+              "type": [
+                "object",
+                "integer"
+              ]
+            }
+          },
+          "crypto_legs": {
+            "type": "array",
+            "items": {
+              "type": [
+                "object",
+                "integer"
+              ]
+            }
+          },
+          "agreed_fx_ars_per_usd": {
+            "type": "number"
+          },
+          "max_spread_bps": {
+            "type": "integer",
+            "default": 50
+          },
+          "fee_bps": {
+            "type": "integer",
+            "default": 0
+          }
+        },
+        "required": [
+          "fiat_legs",
+          "crypto_legs",
+          "agreed_fx_ars_per_usd"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "total_fiat_ars_cents": {
+            "type": "integer"
+          },
+          "total_crypto_usdc_atomic": {
+            "type": "integer"
+          },
+          "effective_spread_bps": {
+            "type": "integer"
+          },
+          "spread_skimming_detected": {
+            "type": "boolean"
+          },
+          "cmp_psav_certificate_sha256": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "resource": "https://gateway.stealthmark.io/x402/verify-sar-ed25519-dossier",
+      "method": "POST",
+      "priceAtomic": "50000",
+      "priceHuman": "$0.05 USDC",
+      "description": "Synthetic Aperture Radar (SAR) IUU dark-vessel detection, EEZ territorial intrusion, and Ed25519 RFC 8032 canonical dossier audit",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "vessel_id": {
+            "type": "string",
+            "default": "UNKNOWN"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lon": {
+            "type": "number"
+          },
+          "rcs_db": {
+            "type": "number",
+            "default": 50.0
+          },
+          "ais_active": {
+            "type": "boolean",
+            "default": false
+          },
+          "eez_lat_range": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "default": [
+              -60.0,
+              -40.0
+            ]
+          },
+          "eez_lon_range": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "default": [
+              -68.0,
+              -50.0
+            ]
+          },
+          "ed25519_pubkey_hex": {
+            "type": "string"
+          },
+          "ed25519_signature_hex": {
+            "type": "string"
+          },
+          "dossier_payload": {
+            "type": [
+              "object",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "inside_eez": {
+            "type": "boolean"
+          },
+          "dark_vessel_detected": {
+            "type": "boolean"
+          },
+          "ed25519_canonical_s_valid": {
+            "type": "boolean"
+          },
+          "dossier_sha256": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}
