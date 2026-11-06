@@ -21,6 +21,18 @@ from omni_x402_prover.x402_protocol import (
     verify_and_settle_payment,
 )
 from omni_x402_prover.prover_service import ProverService
+from omni_x402_prover.x402_trust_grade import (
+    B2B_OFFERS,
+    TrustGradeLeaderboard,
+    build_seller_fix_pack,
+    crawl_x402_directory,
+    get_global_leaderboard,
+    grade_demo_profile,
+    render_leaderboard_html,
+    render_trust_grade_svg,
+    score_x402_seller,
+    validate_public_https_target,
+)
 
 __all__ = [
     "__version__",
@@ -34,4 +46,14 @@ __all__ = [
     "build_payment_required_response",
     "verify_and_settle_payment",
     "ProverService",
+    "B2B_OFFERS",
+    "TrustGradeLeaderboard",
+    "build_seller_fix_pack",
+    "crawl_x402_directory",
+    "get_global_leaderboard",
+    "grade_demo_profile",
+    "render_leaderboard_html",
+    "render_trust_grade_svg",
+    "score_x402_seller",
+    "validate_public_https_target",
 ]

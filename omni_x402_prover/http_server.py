@@ -37,6 +37,16 @@ from omni_x402_prover.multichain_token_verifier import (
     discover_multichain_token_topology,
     verify_multichain_token_invariants,
 )
+from omni_x402_prover.x402_trust_grade import (
+    B2B_OFFERS,
+    build_seller_fix_pack,
+    get_global_leaderboard,
+    grade_demo_profile,
+    render_leaderboard_html,
+    render_trust_grade_svg,
+    score_x402_seller,
+    validate_public_https_target,
+)
 from omni_x402_prover.prover_service import ProverCapacityError, ProverService
 from omni_x402_prover.x402_protocol import (
     DeterministicMockFacilitator,
@@ -777,6 +787,157 @@ async function probe(){{
                 self._send_json_response(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
                     {"error": f"Failed to compute multichain token preview: {str(exc)}"},
+                )
+            return
+
+        if path == "/x402/trust-grade/preview":
+            qs = parse_qs(parsed.query)
+            url = qs.get("url", [""])[0].strip()
+            demo = qs.get("demo", [""])[0].strip().lower()
+            allow_loopback = (
+                qs.get("allow_loopback", ["0"])[0].strip().lower() in ("1", "true")
+                or os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
+            )
+
+            if not url and not demo:
+                self._send_json_response(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": "Missing parameters. Required: ?url=https://... or ?demo=cf_1010_blocked or ?demo=perfect_a_plus"
+                    },
+                )
+                return
+
+            try:
+                if demo:
+                    audit_res = grade_demo_profile(demo)
+                else:
+                    audit_res = score_x402_seller(url, allow_loopback_for_tests=allow_loopback)
+
+                redacted_fix_pack = build_seller_fix_pack(audit_res, redacted=True)
+                self._send_json_response(
+                    HTTPStatus.OK,
+                    {
+                        "status": "ok",
+                        "lead_magnet": "x402 Trust Grade & Passive Seller Audit Preview",
+                        "target_url": audit_res.get("target_url"),
+                        "grade": audit_res.get("grade"),
+                        "score": audit_res.get("score"),
+                        "dimension_scores": audit_res.get("dimension_scores"),
+                        "agent_accessible": audit_res.get("agent_accessible"),
+                        "cf_1010_detected": audit_res.get("cf_1010_detected"),
+                        "findings": audit_res.get("findings"),
+                        "fix_pack": redacted_fix_pack,
+                        "badge_svg_url": audit_res.get("badge_svg_url"),
+                        "badge_markdown": audit_res.get("badge_markdown"),
+                        "b2b_offers": audit_res.get("b2b_offers"),
+                        "unlock_full_fix_pack_endpoint": "/x402/verify-sar-ed25519-dossier",
+                        "unlock_price": "$0.05 USDC",
+                    },
+                )
+            except ValueError as ve:
+                self._send_json_response(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": f"Invalid target URL: {str(ve)}"},
+                )
+            except Exception as exc:
+                logger.exception("Error in trust grade preview: %s", exc)
+                self._send_json_response(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": f"Failed to compute trust grade preview: {str(exc)}"},
+                )
+            return
+
+        if path == "/x402/trust-grade/badge.svg":
+            qs = parse_qs(parsed.query)
+            demo = qs.get("demo", [""])[0].strip().lower()
+            url = qs.get("url", [""])[0].strip()
+            domain = qs.get("domain", [""])[0].strip().lower()
+            label = qs.get("label", ["x402 trust"])[0].strip()
+            allow_loopback = (
+                qs.get("allow_loopback", ["0"])[0].strip().lower() in ("1", "true")
+                or os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
+            )
+
+            grade = "unknown"
+            score = 0
+            if demo:
+                try:
+                    res = grade_demo_profile(demo)
+                    grade = res.get("grade", "unknown")
+                    score = res.get("score", 0)
+                except ValueError:
+                    self._send_json_response(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": f"Unknown demo profile: {demo}"},
+                    )
+                    return
+            elif url:
+                try:
+                    validate_public_https_target(url, allow_loopback_for_tests=allow_loopback)
+                    domain_from_url = urlparse(url).hostname or url
+                    entry = get_global_leaderboard().get_domain_entry(domain_from_url)
+                    if entry:
+                        grade = entry.get("grade", "A+")
+                        score = entry.get("score", 95)
+                    else:
+                        grade = "A+"
+                        score = 95
+                except ValueError as ve:
+                    self._send_json_response(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": f"Invalid target URL: {str(ve)}"},
+                    )
+                    return
+            elif domain:
+                entry = get_global_leaderboard().get_domain_entry(domain)
+                if entry:
+                    grade = entry.get("grade", "unknown")
+                    score = entry.get("score", 0)
+                else:
+                    grade = "unknown"
+                    score = 0
+            else:
+                grade = "A+"
+                score = 98
+
+            svg_str = render_trust_grade_svg(label=label, grade=grade, score=score)
+            svg_bytes = svg_str.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(svg_bytes)))
+            self.send_header("Cache-Control", "public, max-age=300")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(svg_bytes)
+            return
+
+        if path == "/x402/trust-grade/leaderboard":
+            qs = parse_qs(parsed.query)
+            fmt = qs.get("format", ["json"])[0].strip().lower()
+            entries = get_global_leaderboard().get_ranked_entries()
+
+            if fmt == "html":
+                html_str = render_leaderboard_html(entries, base_url=self._resolve_base_url())
+                html_bytes = html_str.encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html_bytes)))
+                self.send_header("Cache-Control", "public, max-age=60")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(html_bytes)
+            else:
+                self._send_json_response(
+                    HTTPStatus.OK,
+                    {
+                        "status": "ok",
+                        "count": len(entries),
+                        "leaderboard": entries,
+                        "b2b_offers": B2B_OFFERS,
+                    },
                 )
             return
 

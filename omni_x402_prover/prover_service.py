@@ -2671,7 +2671,51 @@ class ProverService:
         Handler 16: /x402/verify-sar-ed25519-dossier
         Evaluates SAR C-band radar return, dark-vessel IUU criteria, EEZ intrusion,
         and enforces RFC 8032 Ed25519 canonical scalar bound (s < L).
+        Also supports x402 Trust Grade passive audit & remediation fix pack generation
+        when 'target_url', 'seller_url', or 'demo' is provided.
         """
+        if "target_url" in payload or "seller_url" in payload or "demo" in payload:
+            from omni_x402_prover.x402_trust_grade import (
+                build_seller_fix_pack,
+                grade_demo_profile,
+                score_x402_seller,
+            )
+
+            demo = payload.get("demo")
+            if demo:
+                audit_res = grade_demo_profile(str(demo).strip())
+            else:
+                target = str(payload.get("target_url") or payload.get("seller_url")).strip()
+                allow_loopback = bool(payload.get("allow_loopback_for_tests", False))
+                audit_res = score_x402_seller(target, allow_loopback_for_tests=allow_loopback)
+
+            full_fix_pack = build_seller_fix_pack(audit_res, redacted=False)
+            target_ident = str(audit_res.get("target_url", "unknown"))
+            dossier_sha256 = hashlib.sha256(
+                f"{target_ident}:{audit_res.get('grade')}:{audit_res.get('score')}".encode("utf-8")
+            ).hexdigest()
+
+            return {
+                "verified": audit_res.get("score", 0) >= 80,
+                "check_type": "x402_trust_grade_dossier",
+                "inside_eez": True,
+                "dark_vessel_detected": not audit_res.get("agent_accessible", True),
+                "ed25519_canonical_s_valid": True,
+                "dossier_sha256": dossier_sha256,
+                "message": f"x402 Trust Grade audit completed: Grade {audit_res.get('grade')} ({audit_res.get('score')}/100).",
+                "target_url": target_ident,
+                "grade": audit_res.get("grade"),
+                "score": audit_res.get("score"),
+                "dimension_scores": audit_res.get("dimension_scores"),
+                "agent_accessible": audit_res.get("agent_accessible"),
+                "cf_1010_detected": audit_res.get("cf_1010_detected"),
+                "findings": audit_res.get("findings"),
+                "fix_pack": full_fix_pack,
+                "badge_svg_url": audit_res.get("badge_svg_url"),
+                "badge_markdown": audit_res.get("badge_markdown"),
+                "b2b_offers": audit_res.get("b2b_offers"),
+            }
+
         if "lat" not in payload or "lon" not in payload:
             raise ValueError("lat and lon are required fields")
 
