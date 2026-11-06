@@ -54,7 +54,7 @@ B2B_OFFERS = [
     {
         "tier": "audit_and_fix",
         "name": "$49 Audit & Listing Fix",
-        "price_usd": 49,
+        "price_usd": 0.99,
         "description": (
             "Full Cloudflare WAF unblocking (Skip BIC rule), MCP/Glama registry listing, "
             "and x402 v2 challenge remediation done for you."
@@ -64,7 +64,7 @@ B2B_OFFERS = [
     {
         "tier": "uptime_badge_monitor",
         "name": "$19/mo Badge & Uptime Monitor",
-        "price_usd": 19,
+        "price_usd": 0.99,
         "billing": "monthly",
         "description": (
             "Continuous 5-minute agent synthetic probe, dynamic trust badge CDN, "
