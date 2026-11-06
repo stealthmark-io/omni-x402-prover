@@ -22,6 +22,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from omni_x402_prover.z3_guard import check_decided, new_solver
+
 try:
     import z3
     _HAS_Z3 = True
@@ -548,11 +550,12 @@ def verify_arb_resolution_divergence(
         divergent_dims.append("government_shutdown_postpones")
 
     # 2. Setup Z3 Symbolic Variables
-    event_occurred_epoch = z3.Int("event_occurred_epoch")
-    official_pub_epoch = z3.Int("official_pub_epoch")
-    intraday_peak = z3.Int("intraday_peak")
-    closing_val = z3.Int("closing_val")
-    gov_shutdown_delay = z3.Int("gov_shutdown_delay")
+    ctx = z3.Context()
+    event_occurred_epoch = z3.Int("event_occurred_epoch", ctx)
+    official_pub_epoch = z3.Int("official_pub_epoch", ctx)
+    intraday_peak = z3.Int("intraday_peak", ctx)
+    closing_val = z3.Int("closing_val", ctx)
+    gov_shutdown_delay = z3.Int("gov_shutdown_delay", ctx)
 
     # Bounded physical consistency constraints
     min_cutoff = min(pm_spec.cutoff_epoch_utc, kalshi_spec.cutoff_epoch_utc)
@@ -615,18 +618,18 @@ def verify_arb_resolution_divergence(
     double_loss_dir2 = z3.And(pm_yes, z3.Not(kalshi_yes))
 
     # Solve Direction 1
-    s1 = z3.Solver()
+    s1 = new_solver(ctx)
     for c in base_constraints:
         s1.add(c)
     s1.add(double_loss_dir1)
-    res1 = s1.check()
+    res1 = check_decided(s1)
 
     # Solve Direction 2
-    s2 = z3.Solver()
+    s2 = new_solver(ctx)
     for c in base_constraints:
         s2.add(c)
     s2.add(double_loss_dir2)
-    res2 = s2.check()
+    res2 = check_decided(s2)
 
     trap_detected = (res1 == z3.sat) or (res2 == z3.sat)
 

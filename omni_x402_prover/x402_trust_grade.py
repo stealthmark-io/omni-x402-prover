@@ -48,6 +48,8 @@ REDACTION_NOTICE = (
     "($0.05 USDC) or $49 Listing & WAF Audit]"
 )
 
+INVALID_TARGET_MESSAGE = "Invalid target URL: only public https:// URLs are accepted"
+
 B2B_OFFERS = [
     {
         "tier": "audit_and_fix",

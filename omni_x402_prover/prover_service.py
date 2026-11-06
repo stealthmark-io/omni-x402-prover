@@ -38,6 +38,7 @@ from omni_x402_prover.multichain_token_verifier import (
     verify_multichain_token_invariants,
     verify_multichain_token_z3,
 )
+from omni_x402_prover.z3_guard import ProverCapacityError, main_context_lock
 
 # --- Dynamic Path Resolution for regalo-asi ---
 def _resolve_and_import_verifiers() -> Tuple[Any, Any]:
@@ -91,10 +92,6 @@ class UntrustedCodeError(ValueError):
 
 class UntrustedRuntimeError(ValueError):
     """Arithmetic fault at one evaluation point (division by zero); engines may skip that point."""
-
-
-class ProverCapacityError(RuntimeError):
-    """The engine cannot decide the request within its bounds; never answered with a vacuous proof (HTTP 503)."""
 
 
 _MAX_UNTRUSTED_CODE_CHARS = 4096
@@ -1237,13 +1234,14 @@ class ProverService:
         max_shares = _require_int(payload.get("max_shares", 10_000), "max_shares", 1, (1 << _VAULT_INPUT_BITS) - 1)
         check_zero_share_mint = bool(payload.get("check_zero_share_mint", False))
 
-        result = self._prover.check_vault_share_rounding_conservation(
-            deposit_fn_code=deposit_fn_code,
-            redeem_fn_code=redeem_fn_code,
-            max_assets=max_assets,
-            max_shares=max_shares,
-            check_zero_share_mint=check_zero_share_mint,
-        )
+        with main_context_lock():
+            result = self._prover.check_vault_share_rounding_conservation(
+                deposit_fn_code=deposit_fn_code,
+                redeem_fn_code=redeem_fn_code,
+                max_assets=max_assets,
+                max_shares=max_shares,
+                check_zero_share_mint=check_zero_share_mint,
+            )
         return result.to_dict()
 
     def verify_polymarket_basket(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1310,13 +1308,14 @@ class ProverService:
             custom_formula = str(custom_formula)
             _audit_untrusted_source(custom_formula, mode="exec", input_bits=_POLYMARKET_INPUT_BITS)
 
-        solvency_res = self._prover.check_conditional_token_conservation(
-            num_outcomes=num_outcomes,
-            convert_no_subset_size=convert_no_subset_size,
-            fee_bps=fee_bps,
-            payout_per_share=scaled_payout,
-            custom_conversion_formula=custom_formula,
-        )
+        with main_context_lock():
+            solvency_res = self._prover.check_conditional_token_conservation(
+                num_outcomes=num_outcomes,
+                convert_no_subset_size=convert_no_subset_size,
+                fee_bps=fee_bps,
+                payout_per_share=scaled_payout,
+                custom_conversion_formula=custom_formula,
+            )
 
         # Arb Trap Resolution Divergence Verification if requested
         arb_res: Optional[Dict[str, Any]] = None
@@ -1478,12 +1477,13 @@ class ProverService:
                     _audit_untrusted_source(
                         precondition, mode="eval", bound_names=tuple(var_names), input_bits=input_bits
                     )
-            res = self._prover.check_bitvec_overflow_and_cast_safety(
-                expr=expr,
-                var_bitwidths=var_bitwidths,
-                target_bitwidth=target_bitwidth,
-                preconditions=preconditions,
-            )
+            with main_context_lock():
+                res = self._prover.check_bitvec_overflow_and_cast_safety(
+                    expr=expr,
+                    var_bitwidths=var_bitwidths,
+                    target_bitwidth=target_bitwidth,
+                    preconditions=preconditions,
+                )
             return res.to_dict()
 
         # ZK Circuit Uniqueness
@@ -1512,13 +1512,14 @@ class ProverService:
         for constraint in constraints_exprs:
             _audit_untrusted_source(constraint, mode="eval", bound_names=bound_names, input_bits=input_bits)
 
-        res = self._prover.check_zk_underconstrained_circuit(
-            public_inputs=public_inputs,
-            witness_vars=witness_vars,
-            output_var=output_var,
-            constraints_exprs=constraints_exprs,
-            domain_bounds=domain_bounds,
-        )
+        with main_context_lock():
+            res = self._prover.check_zk_underconstrained_circuit(
+                public_inputs=public_inputs,
+                witness_vars=witness_vars,
+                output_var=output_var,
+                constraints_exprs=constraints_exprs,
+                domain_bounds=domain_bounds,
+            )
         return res.to_dict()
 
     def verify_differential_spec(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1551,15 +1552,16 @@ class ProverService:
         _audit_untrusted_source(code_a, mode="exec", input_bits=input_bits)
         _audit_untrusted_source(code_b, mode="exec", input_bits=input_bits)
 
-        res = self._differential_verifier.verify_differential_consensus(
-            code_a=code_a,
-            code_b=code_b,
-            arg_names=arg_names,
-            domain_bounds=domain_bounds,
-            fuzz_iterations=fuzz_iterations,
-            seed=seed,
-            unsigned_bit_width=unsigned_bit_width,
-        )
+        with main_context_lock():
+            res = self._differential_verifier.verify_differential_consensus(
+                code_a=code_a,
+                code_b=code_b,
+                arg_names=arg_names,
+                domain_bounds=domain_bounds,
+                fuzz_iterations=fuzz_iterations,
+                seed=seed,
+                unsigned_bit_width=unsigned_bit_width,
+            )
         return res.to_dict()
 
     def verify_forensic_graph(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2717,6 +2719,7 @@ class ProverService:
         """
         if "target_url" in payload or "seller_url" in payload or "demo" in payload:
             from omni_x402_prover.x402_trust_grade import (
+                INVALID_TARGET_MESSAGE,
                 build_seller_fix_pack,
                 grade_demo_profile,
                 score_x402_seller,
@@ -2728,7 +2731,10 @@ class ProverService:
             else:
                 target = str(payload.get("target_url") or payload.get("seller_url")).strip()
                 allow_loopback = os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
-                audit_res = score_x402_seller(target, allow_loopback_for_tests=allow_loopback)
+                try:
+                    audit_res = score_x402_seller(target, allow_loopback_for_tests=allow_loopback)
+                except ValueError as exc:
+                    raise ValueError(INVALID_TARGET_MESSAGE) from exc
 
             full_fix_pack = build_seller_fix_pack(audit_res, redacted=False)
             target_ident = str(audit_res.get("target_url", "unknown"))

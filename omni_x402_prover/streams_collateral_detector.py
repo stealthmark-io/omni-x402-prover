@@ -30,10 +30,12 @@ logger = logging.getLogger("omni_x402_prover.streams_collateral_detector")
 # Optional Z3 Theorem Prover integration
 try:
     import z3  # type: ignore
+    from omni_x402_prover.z3_guard import SOLVER_TIMEOUT_MS
 
     HAS_Z3 = True
 except ImportError:
     z3 = None  # type: ignore
+    SOLVER_TIMEOUT_MS = 2_000
     HAS_Z3 = False
 
 # ---------------------------------------------------------------------------
@@ -615,31 +617,33 @@ def compute_insolvency_shock_witness(
     # 1. Z3 Implementation
     if should_use_z3 and z3 is not None:
         try:
-            opt = z3.Optimize()
-            h = z3.Real("haircut")
+            ctx = z3.Context()
+            opt = z3.Optimize(ctx=ctx)
+            opt.set("timeout", SOLVER_TIMEOUT_MS)
+            h = z3.Real("haircut", ctx)
             vars_map: Dict[str, Any] = {}
 
             for n_id, n_info in nodes.items():
-                v = z3.Real(f"v_{n_id}")
+                v = z3.Real(f"v_{n_id}", ctx)
                 vars_map[n_id] = v
-                opt.add(v >= 0.0)
+                opt.add(v >= z3.RealVal(0.0, ctx))
 
                 is_bb = n_info.get("is_blackbox", False) or n_id == OFFCHAIN_BLACKBOX_CUSTODY
                 if is_bb:
-                    opt.add(v == 1.0 - h)
+                    opt.add(v == z3.RealVal(1.0, ctx) - h)
                 elif n_info.get("is_terminal", False):
-                    opt.add(v == 1.0)
+                    opt.add(v == z3.RealVal(1.0, ctx))
                 else:
                     outs = adj_weights.get(n_id, [])
                     if outs:
-                        val_expr = sum(w * vars_map.setdefault(t, z3.Real(f"v_{t}")) for t, w in outs)
+                        val_expr = sum((z3.RealVal(w, ctx) * vars_map.setdefault(t, z3.Real(f"v_{t}", ctx)) for t, w in outs), z3.RealVal(0.0, ctx))
                         opt.add(v == val_expr)
                     else:
-                        opt.add(v == 1.0)
+                        opt.add(v == z3.RealVal(1.0, ctx))
 
-            root_v = vars_map.get(root_token, z3.Real(f"v_{root_token}"))
-            opt.add(root_v <= depeg_threshold)
-            opt.add(h >= 0.0, h <= 1.0)
+            root_v = vars_map.get(root_token, z3.Real(f"v_{root_token}", ctx))
+            opt.add(root_v <= z3.RealVal(depeg_threshold, ctx))
+            opt.add(h >= z3.RealVal(0.0, ctx), h <= z3.RealVal(1.0, ctx))
             opt.minimize(h)
 
             if opt.check() == z3.sat:

@@ -18,6 +18,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from omni_x402_prover.z3_guard import check_decided, new_solver
+
 # Ensure z3 can be imported across python versions / virtual environments without polluting sys.path
 try:
     import z3
@@ -336,7 +338,8 @@ def verify_multichain_token_invariants(topology: Dict[str, Any]) -> Dict[str, An
     norm_cap = _normalize(effective_cap, home_dec)
 
     # Z3 QF_LIA Supply Conservation Solver
-    supply_solver = z3.Solver()
+    ctx = z3.Context()
+    supply_solver = new_solver(ctx)
     z3_supplies = []
     actual_norm_sum = 0
 
@@ -346,19 +349,19 @@ def verify_multichain_token_invariants(topology: Dict[str, Any]) -> Dict[str, An
         norm_sup = _normalize(raw_sup, c_dec)
         actual_norm_sum += norm_sup
 
-        var = z3.Int(f"supply_{c_name}")
+        var = z3.Int(f"supply_{c_name}", ctx)
         supply_solver.add(var == norm_sup)
         z3_supplies.append(var)
 
-    cap_var = z3.Int("effective_cap")
+    cap_var = z3.Int("effective_cap", ctx)
     supply_solver.add(cap_var == norm_cap)
 
-    total_supply_expr = z3.Sum(z3_supplies) if z3_supplies else z3.IntVal(0)
+    total_supply_expr = z3.Sum(z3_supplies) if z3_supplies else z3.IntVal(0, ctx)
 
     # Check if sum > cap can be SAT
     supply_solver.push()
     supply_solver.add(total_supply_expr > cap_var)
-    supply_check = supply_solver.check()
+    supply_check = check_decided(supply_solver)
     supply_solver.pop()
 
     if supply_check == z3.sat:
@@ -492,16 +495,16 @@ def verify_multichain_token_invariants(topology: Dict[str, Any]) -> Dict[str, An
                 })
 
     # Z3 verification of peer symmetry
-    sym_solver = z3.Solver()
+    sym_solver = new_solver(ctx)
     edge_vars = []
     for idx, edge in enumerate(asymmetric_edges):
-        v = z3.Bool(f"asym_edge_{idx}")
+        v = z3.Bool(f"asym_edge_{idx}", ctx)
         sym_solver.add(v == True)
         edge_vars.append(v)
 
     phantom_vars = []
     for idx, p in enumerate(phantom_peers):
-        v = z3.Bool(f"phantom_peer_{idx}")
+        v = z3.Bool(f"phantom_peer_{idx}", ctx)
         sym_solver.add(v == True)
         phantom_vars.append(v)
 
@@ -516,20 +519,20 @@ def verify_multichain_token_invariants(topology: Dict[str, Any]) -> Dict[str, An
     inv3_solver_result = "unsat"
     single_point_routes = []
 
-    quorum_solver = z3.Solver()
+    quorum_solver = new_solver(ctx)
     for c_name, c_info in chains.items():
         dvn_q = c_info.get("required_dvns", c_info.get("dvn_count", 2))
         ntt_thresh = c_info.get("ntt_threshold")
 
         effective_quorum = ntt_thresh if ntt_thresh is not None else dvn_q
 
-        q_var = z3.Int(f"quorum_{c_name}")
+        q_var = z3.Int(f"quorum_{c_name}", ctx)
         quorum_solver.add(q_var == effective_quorum)
 
         # Check if quorum < 2
         quorum_solver.push()
         quorum_solver.add(q_var < 2)
-        if quorum_solver.check() == z3.sat:
+        if check_decided(quorum_solver) == z3.sat:
             inv3_passed = False
             inv3_solver_result = "sat"
             single_point_routes.append({

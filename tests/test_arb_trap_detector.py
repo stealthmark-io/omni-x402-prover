@@ -12,6 +12,7 @@ Tests:
 7. Rule Spec Normalizer (NLP regex extraction + explicit overrides)
 8. Loopback HTTP GET /x402/arb-trap/preview (Free lead magnet with redacted witness)
 9. Loopback Paid POST /x402/verify-polymarket-basket with rule divergence
+10. Preview hardening (offline): generic 500s, 503 + Retry-After when saturated, TTL cache by normalized params
 """
 
 from __future__ import annotations
@@ -21,9 +22,11 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from typing import Any, Dict, Optional, Tuple
+from unittest.mock import patch
 
 from omni_x402_prover.arb_trap_detector import (
     MarketRuleSpec,
@@ -32,7 +35,12 @@ from omni_x402_prover.arb_trap_detector import (
     fetch_polymarket_market,
     verify_arb_resolution_divergence,
 )
-from omni_x402_prover.http_server import create_http_server
+from omni_x402_prover.http_server import (
+    PREVIEW_CACHE_TTL_SECONDS,
+    PREVIEW_RETRY_AFTER_SECONDS,
+    PreviewGate,
+    create_http_server,
+)
 from omni_x402_prover.prover_service import ProverService
 from omni_x402_prover.x402_protocol import (
     DeterministicMockFacilitator,
@@ -467,6 +475,135 @@ class TestArbTrapHTTPEndpoints(unittest.TestCase):
         # Settlement receipt confirmation
         self.assertIn("settlementReceipt", body)
         self.assertTrue(body["settlementReceipt"].get("success"))
+
+
+class TestPreviewGate(unittest.TestCase):
+    """Unit tests for the concurrency cap and TTL/LRU cache that guard the free previews."""
+
+    def test_11_slots_are_non_blocking_and_reusable(self) -> None:
+        gate = PreviewGate(max_concurrent=2)
+        self.assertTrue(gate.try_acquire())
+        self.assertTrue(gate.try_acquire())
+        self.assertFalse(gate.try_acquire())
+        gate.release()
+        self.assertTrue(gate.try_acquire())
+
+    def test_12_cache_expires_after_ttl_and_evicts_least_recently_used(self) -> None:
+        now = [1000.0]
+        gate = PreviewGate(max_concurrent=1, cache_ttl_seconds=60.0, cache_max_entries=2, clock=lambda: now[0])
+        gate.put("a", {"v": 1})
+        gate.put("b", {"v": 2})
+        self.assertEqual(gate.get("a"), {"v": 1})
+        gate.put("c", {"v": 3})
+        self.assertIsNone(gate.get("b"))
+        self.assertEqual(gate.get("a"), {"v": 1})
+        self.assertEqual(gate.get("c"), {"v": 3})
+
+        now[0] += 59.9
+        self.assertEqual(gate.get("a"), {"v": 1})
+        now[0] += 0.1
+        self.assertIsNone(gate.get("a"))
+        self.assertIsNone(gate.get("c"))
+
+
+class TestArbTrapPreviewHardening(unittest.TestCase):
+    """Offline loopback tests: generic preview errors, concurrency cap with Retry-After, and the short cache."""
+
+    PM_RULES = "Resolves at 2024-12-31 23:59:59 UTC"
+    KALSHI_RULES = "Resolves at 2024-12-31 23:59:59 ET"
+    SAFE_RESULT = {"trap_detected": False, "net_spread_bps": 0}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        config = X402Config(pay_to_address=SAMPLE_PAY_TO)
+        cls.server = create_http_server(
+            host="127.0.0.1",
+            port=0,
+            config=config,
+            prover_service=ProverService(config),
+            nonce_store=ReplayNonceStore(max_entries=1000),
+            facilitator=DeterministicMockFacilitator(config),
+        )
+        cls.base_url = f"http://127.0.0.1:{cls.server.server_address[1]}"
+        cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.server_thread.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.server_thread.join(timeout=1.0)
+
+    def setUp(self) -> None:
+        self.now = [1000.0]
+        self.gate = PreviewGate(max_concurrent=1, clock=lambda: self.now[0])
+        self.server.RequestHandlerClass.arb_trap_preview_gate = self.gate
+
+    def _preview(self, **params: str) -> Tuple[int, Dict[str, Any], Dict[str, str]]:
+        return _http_req(f"{self.base_url}/x402/arb-trap/preview?{urllib.parse.urlencode(params)}")
+
+    def _assert_slot_free(self) -> None:
+        self.assertTrue(self.gate.try_acquire())
+        self.gate.release()
+
+    def test_13_preview_error_is_generic_logged_and_not_cached(self) -> None:
+        secret = "internal detail /opt/omni/private-path"
+        with patch(
+            "omni_x402_prover.http_server.verify_arb_resolution_divergence",
+            side_effect=[RuntimeError(secret), self.SAFE_RESULT],
+        ):
+            with self.assertLogs("omni_x402_prover.http", level="ERROR") as logs:
+                status, body, _ = self._preview(pm_rules=self.PM_RULES, kalshi_rules=self.KALSHI_RULES)
+            self.assertEqual(status, 500)
+            self.assertEqual(body, {"error": "Failed to compute arb trap preview"})
+            self.assertEqual(str(logs.records[0].exc_info[1]), secret)
+            self._assert_slot_free()
+
+            status, body, _ = self._preview(pm_rules=self.PM_RULES, kalshi_rules=self.KALSHI_RULES)
+            self.assertEqual(status, 200)
+            self.assertFalse(body["trap_detected"])
+
+    def test_14_saturated_preview_returns_503_with_retry_after(self) -> None:
+        with patch(
+            "omni_x402_prover.http_server.verify_arb_resolution_divergence", return_value=self.SAFE_RESULT
+        ) as verify:
+            self.assertTrue(self.gate.try_acquire())
+            try:
+                status, body, headers = self._preview(pm_rules=self.PM_RULES, kalshi_rules=self.KALSHI_RULES)
+            finally:
+                self.gate.release()
+            self.assertEqual(status, 503)
+            self.assertEqual(headers.get("Retry-After"), str(PREVIEW_RETRY_AFTER_SECONDS))
+            self.assertIn("error", body)
+            verify.assert_not_called()
+
+            status, _, _ = self._preview(pm_rules=self.PM_RULES, kalshi_rules=self.KALSHI_RULES)
+            self.assertEqual(status, 200)
+            self._assert_slot_free()
+
+    def test_15_cache_serves_repeats_by_normalized_params_until_ttl(self) -> None:
+        market = {"title": "Will BTC close above $100,000?", "rules_text": self.KALSHI_RULES, "end_date_iso": None}
+        with patch("omni_x402_prover.http_server.fetch_polymarket_market", return_value=market) as fetch_pm, patch(
+            "omni_x402_prover.http_server.fetch_kalshi_market", return_value=market
+        ) as fetch_kalshi, patch(
+            "omni_x402_prover.http_server.verify_arb_resolution_divergence", return_value=self.SAFE_RESULT
+        ) as verify:
+            first = self._preview(pm="btc-100k", kalshi="KXBTCD-100000")
+            repeat = self._preview(pm="btc-100k", kalshi="KXBTCD-100000", pm_title="unused without pm_rules")
+            self.assertEqual(first[0], 200)
+            self.assertEqual(repeat[:2], first[:2])
+            self.assertEqual((fetch_pm.call_count, fetch_kalshi.call_count, verify.call_count), (1, 1, 1))
+
+            self._preview(pm="btc-100k", kalshi="KXBTCD-200000")
+            self.assertEqual(verify.call_count, 2)
+
+            self._preview(pm_rules=self.PM_RULES, kalshi_rules=self.KALSHI_RULES, pm_title="Title A")
+            self._preview(pm_rules=self.PM_RULES, kalshi_rules=self.KALSHI_RULES, pm_title="Title B")
+            self.assertEqual(verify.call_count, 4)
+
+            self.now[0] += PREVIEW_CACHE_TTL_SECONDS
+            self._preview(pm="btc-100k", kalshi="KXBTCD-100000")
+            self.assertEqual((fetch_pm.call_count, verify.call_count), (3, 5))
 
 
 if __name__ == "__main__":

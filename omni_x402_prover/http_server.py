@@ -16,7 +16,9 @@ import logging
 import os
 import sys
 import threading
+import time
 import urllib.request
+from collections import OrderedDict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -39,6 +41,7 @@ from omni_x402_prover.multichain_token_verifier import (
 )
 from omni_x402_prover.x402_trust_grade import (
     B2B_OFFERS,
+    INVALID_TARGET_MESSAGE,
     build_seller_fix_pack,
     get_global_leaderboard,
     grade_demo_profile,
@@ -74,6 +77,58 @@ logger = logging.getLogger("omni_x402_prover.http")
 
 MAX_REQUEST_BODY_BYTES = 65536  # 64 KB DoS protection threshold
 
+# Free previews are unauthenticated, and each one can hold a server thread for seconds on
+# upstream HTTP/RPC calls plus Z3. These caps shed the excess with 503 so a flood cannot
+# exhaust the threads (systemd TasksMax) that the paid routes share.
+ARB_TRAP_PREVIEW_MAX_CONCURRENT = 4
+MULTICHAIN_PREVIEW_MAX_CONCURRENT = 2
+PREVIEW_CACHE_TTL_SECONDS = 60.0
+PREVIEW_CACHE_MAX_ENTRIES = 256
+PREVIEW_RETRY_AFTER_SECONDS = 5
+
+
+class PreviewGate:
+    """Non-blocking concurrency cap plus a short TTL/LRU cache for one free preview route."""
+
+    def __init__(
+        self,
+        max_concurrent: int,
+        cache_ttl_seconds: float = PREVIEW_CACHE_TTL_SECONDS,
+        cache_max_entries: int = PREVIEW_CACHE_MAX_ENTRIES,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._slots = threading.BoundedSemaphore(max_concurrent)
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._cache_max_entries = cache_max_entries
+        self._clock = clock
+        self._cache: "OrderedDict[Any, Tuple[float, Any]]" = OrderedDict()
+        self._cache_lock = threading.Lock()
+
+    def try_acquire(self) -> bool:
+        return self._slots.acquire(blocking=False)
+
+    def release(self) -> None:
+        self._slots.release()
+
+    def get(self, key: Any) -> Optional[Any]:
+        with self._cache_lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            expires_at, value = entry
+            if self._clock() >= expires_at:
+                del self._cache[key]
+                return None
+            self._cache.move_to_end(key)
+            return value
+
+    def put(self, key: Any, value: Any) -> None:
+        with self._cache_lock:
+            self._cache[key] = (self._clock() + self._cache_ttl_seconds, value)
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._cache_max_entries:
+                self._cache.popitem(last=False)
+
 
 class X402HTTPHandler(BaseHTTPRequestHandler):
     """HTTP Request Handler implementing x402 v1 challenge & settlement."""
@@ -83,6 +138,8 @@ class X402HTTPHandler(BaseHTTPRequestHandler):
     prover_service: ProverService
     nonce_store: ReplayNonceStore
     facilitator: FacilitatorClient
+    arb_trap_preview_gate: PreviewGate
+    multichain_preview_gate: PreviewGate
 
     # Suppress noisy default stderr logging in tests
     def log_message(self, format: str, *args: Any) -> None:
@@ -118,6 +175,42 @@ class X402HTTPHandler(BaseHTTPRequestHandler):
                 self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+    def _run_preview(self, label: str, gate: PreviewGate, cache_key: Any, compute: Callable[[], Any]) -> Optional[Any]:
+        """Return the cached or freshly computed preview, or None after sending a 503/500 response."""
+        cached = gate.get(cache_key)
+        if cached is not None:
+            return cached
+        if not gate.try_acquire():
+            self._send_json_response(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"error": f"The {label} preview is at capacity. Retry shortly."},
+                extra_headers={"Retry-After": str(PREVIEW_RETRY_AFTER_SECONDS)},
+            )
+            return None
+        try:
+            result = compute()
+        except ProverCapacityError as cap_err:
+            logger.warning("Capacity error in %s preview: %s", label, cap_err)
+            self._send_json_response(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"error": str(cap_err)},
+                extra_headers={"Retry-After": str(PREVIEW_RETRY_AFTER_SECONDS)},
+            )
+            return None
+        except Exception:
+            logger.exception("Error in %s preview", label)
+            result = None
+        finally:
+            gate.release()
+        if result is None:
+            self._send_json_response(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": f"Failed to compute {label} preview"},
+            )
+            return None
+        gate.put(cache_key, result)
+        return result
 
     def _send_payment_challenge(
         self,
@@ -578,7 +671,10 @@ async function probe(){{
                 )
                 return
 
-            try:
+            pm_key = ("rules", pm_title, pm_rules, pm_cutoff) if pm_rules else ("market", pm_param)
+            kalshi_key = ("rules", kalshi_title, kalshi_rules, kalshi_cutoff) if kalshi_rules else ("market", kalshi_param)
+
+            def compute_arb_trap_preview() -> Dict[str, Any]:
                 # 1. Resolve Polymarket Spec
                 if pm_rules:
                     pm_spec = extract_rule_spec(pm_title, pm_rules, end_date_iso=pm_cutoff or None, platform="polymarket")
@@ -629,44 +725,36 @@ async function probe(){{
                             f"the full Z3 proof, exact timestamp witness, and viral X alert."
                         ),
                     }
-                    self._send_json_response(
-                        HTTPStatus.OK,
-                        {
-                            "status": "ok",
-                            "lead_magnet": "Arb Trap Resolution Divergence Preview",
-                            "trap_detected": True,
-                            "risk_grade": res.get("risk_grade", "CRITICAL_WIPEOUT_RISK"),
-                            "net_spread_bps": res.get("net_spread_bps", 320),
-                            "divergent_dimensions_count": len(res.get("divergent_dimensions", [])),
-                            "divergent_dimensions": res.get("divergent_dimensions", []),
-                            "witness_redacted": witness_redacted,
-                            "unlock_full_witness_endpoint": "/x402/verify-polymarket-basket",
-                            "unlock_price": "$0.02 USDC",
-                            "unlock_payment_rail": "Base Mainnet eip155:8453 (EIP-3009)",
-                        },
-                    )
+                    return {
+                        "status": "ok",
+                        "lead_magnet": "Arb Trap Resolution Divergence Preview",
+                        "trap_detected": True,
+                        "risk_grade": res.get("risk_grade", "CRITICAL_WIPEOUT_RISK"),
+                        "net_spread_bps": res.get("net_spread_bps", 320),
+                        "divergent_dimensions_count": len(res.get("divergent_dimensions", [])),
+                        "divergent_dimensions": res.get("divergent_dimensions", []),
+                        "witness_redacted": witness_redacted,
+                        "unlock_full_witness_endpoint": "/x402/verify-polymarket-basket",
+                        "unlock_price": "$0.02 USDC",
+                        "unlock_payment_rail": "Base Mainnet eip155:8453 (EIP-3009)",
+                    }
                 else:
-                    self._send_json_response(
-                        HTTPStatus.OK,
-                        {
-                            "status": "ok",
-                            "lead_magnet": "Arb Trap Resolution Divergence Preview",
-                            "trap_detected": False,
-                            "risk_grade": "LOW_RISK",
-                            "net_spread_bps": res.get("net_spread_bps", 0),
-                            "divergent_dimensions_count": 0,
-                            "divergent_dimensions": [],
-                            "mathematical_guarantee": "UNSAT_NO_DOUBLE_LOSS_IN_MODELED_DIMENSIONS",
-                            "message": "Safe arbitrage: No double-loss resolution divergence found in modeled dimensions.",
-                            "unlock_full_witness_endpoint": "/x402/verify-polymarket-basket",
-                        },
-                    )
-            except Exception as e:
-                logger.exception("Error in arb trap preview: %s", e)
-                self._send_json_response(
-                    HTTPStatus.INTERNAL_SERVER_ERROR,
-                    {"error": f"Failed to compute arb trap preview: {str(e)}"},
-                )
+                    return {
+                        "status": "ok",
+                        "lead_magnet": "Arb Trap Resolution Divergence Preview",
+                        "trap_detected": False,
+                        "risk_grade": "LOW_RISK",
+                        "net_spread_bps": res.get("net_spread_bps", 0),
+                        "divergent_dimensions_count": 0,
+                        "divergent_dimensions": [],
+                        "mathematical_guarantee": "UNSAT_NO_DOUBLE_LOSS_IN_MODELED_DIMENSIONS",
+                        "message": "Safe arbitrage: No double-loss resolution divergence found in modeled dimensions.",
+                        "unlock_full_witness_endpoint": "/x402/verify-polymarket-basket",
+                    }
+
+            body = self._run_preview("arb trap", self.arb_trap_preview_gate, (pm_key, kalshi_key), compute_arb_trap_preview)
+            if body is not None:
+                self._send_json_response(HTTPStatus.OK, body)
             return
 
         if path == "/x402/multichain-token/preview":
@@ -685,7 +773,12 @@ async function probe(){{
                 )
                 return
 
-            try:
+            if demo in ("asymmetric_peer", "supply_conservation"):
+                cache_key: Tuple[str, ...] = ("demo", demo)
+            else:
+                cache_key = ("token", token.lower(), chain)
+
+            def compute_multichain_preview() -> Tuple[str, Any]:
                 if demo == "asymmetric_peer":
                     base_addr = "0x1111111111111111111111111111111111111111"
                     arb_addr = "0x2222222222222222222222222222222222222222"
@@ -777,7 +870,11 @@ async function probe(){{
                     except Exception:
                         chains_checked = [chain]
                         verdict = "VERIFICATION_PENDING"
+                return verdict, chains_checked
 
+            outcome = self._run_preview("multichain token", self.multichain_preview_gate, cache_key, compute_multichain_preview)
+            if outcome is not None:
+                verdict, chains_checked = outcome
                 self._send_json_response(
                     HTTPStatus.OK,
                     {
@@ -791,12 +888,6 @@ async function probe(){{
                         "unlock_price": "$0.02 USDC",
                         "unlock_payment_rail": "Base Mainnet eip155:8453 (EIP-3009)",
                     },
-                )
-            except Exception as exc:
-                logger.exception("Error in multichain token preview: %s", exc)
-                self._send_json_response(
-                    HTTPStatus.INTERNAL_SERVER_ERROR,
-                    {"error": f"Failed to compute multichain token preview: {str(exc)}"},
                 )
             return
 
@@ -843,15 +934,16 @@ async function probe(){{
                     },
                 )
             except ValueError as ve:
+                logger.info("Rejected trust grade preview request: %s", ve)
                 self._send_json_response(
                     HTTPStatus.BAD_REQUEST,
-                    {"error": f"Invalid target URL: {str(ve)}"},
+                    {"error": f"Invalid target URL: {str(ve)}" if demo else INVALID_TARGET_MESSAGE},
                 )
             except Exception as exc:
                 logger.exception("Error in trust grade preview: %s", exc)
                 self._send_json_response(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
-                    {"error": f"Failed to compute trust grade preview: {str(exc)}"},
+                    {"error": "Failed to compute trust grade preview"},
                 )
             return
 
@@ -888,9 +980,10 @@ async function probe(){{
                         grade = "A+"
                         score = 95
                 except ValueError as ve:
+                    logger.info("Rejected trust grade badge target: %s", ve)
                     self._send_json_response(
                         HTTPStatus.BAD_REQUEST,
-                        {"error": f"Invalid target URL: {str(ve)}"},
+                        {"error": INVALID_TARGET_MESSAGE},
                     )
                     return
             elif domain:
@@ -1385,6 +1478,8 @@ def create_http_server(
         prover_service = active_prover
         nonce_store = active_store
         facilitator = active_facilitator
+        arb_trap_preview_gate = PreviewGate(max_concurrent=ARB_TRAP_PREVIEW_MAX_CONCURRENT)
+        multichain_preview_gate = PreviewGate(max_concurrent=MULTICHAIN_PREVIEW_MAX_CONCURRENT)
 
     server = ThreadingHTTPServer((host, port), CustomHandler)
     server.daemon_threads = True

@@ -735,3 +735,110 @@ def test_http_multichain_token_preview_routes():
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Test 12: Preview hardening (offline): normalized-param cache, 503 + Retry-After, generic 500s
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def multichain_preview():
+    """Loopback server whose multichain preview gate has one slot and a controllable clock."""
+    import threading
+    import urllib.error
+    import urllib.request
+    from omni_x402_prover.http_server import PreviewGate, create_http_server
+    from omni_x402_prover.prover_service import ProverService
+    from omni_x402_prover.x402_protocol import (
+        DeterministicMockFacilitator,
+        ReplayNonceStore,
+        X402Config,
+    )
+
+    config = X402Config()
+    server = create_http_server(
+        host="127.0.0.1",
+        port=0,
+        config=config,
+        prover_service=ProverService(config),
+        nonce_store=ReplayNonceStore(),
+        facilitator=DeterministicMockFacilitator(config),
+    )
+    now = [1000.0]
+    gate = PreviewGate(max_concurrent=1, clock=lambda: now[0])
+    server.RequestHandlerClass.multichain_preview_gate = gate
+    url = f"http://127.0.0.1:{server.server_address[1]}/x402/multichain-token/preview"
+
+    def get(query):
+        try:
+            with urllib.request.urlopen(f"{url}?{query}", timeout=5) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8")), resp.headers
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8")), exc.headers
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        yield get, gate, now
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=1.0)
+
+
+def test_http_multichain_token_preview_cache_and_capacity(multichain_preview):
+    from omni_x402_prover.http_server import PREVIEW_CACHE_TTL_SECONDS, PREVIEW_RETRY_AFTER_SECONDS
+
+    get, gate, now = multichain_preview
+    token = "0xAbCdEf0000000000000000000000000000000001"
+    audit_result = {"verification": {"status": "VERIFIED_SAFE", "chains_checked": ["base", "arbitrum"]}}
+    with patch("omni_x402_prover.http_server.audit_multichain_token", return_value=audit_result) as audit:
+        status, data, _ = get(f"token={token}&chain=base&standard=OFT")
+        assert status == 200
+        assert (data["verdict"], data["standard"], data["chains_checked"]) == ("VERIFIED_SAFE", "OFT", ["base", "arbitrum"])
+        audit.assert_called_once_with(token_address=token, home_chain="base")
+
+        status, data, _ = get(f"token={token.lower()}&chain=BASE&standard=ntt")
+        assert (status, data["verdict"], data["standard"]) == (200, "VERIFIED_SAFE", "NTT")
+        assert audit.call_count == 1
+
+        assert gate.try_acquire()
+        try:
+            cached_status = get(f"token={token}&chain=base")[0]
+            status, data, headers = get(f"token={token}&chain=arbitrum")
+        finally:
+            gate.release()
+        assert cached_status == 200
+        assert status == 503
+        assert headers.get("Retry-After") == str(PREVIEW_RETRY_AFTER_SECONDS)
+        assert "error" in data
+        assert audit.call_count == 1
+
+        now[0] += PREVIEW_CACHE_TTL_SECONDS
+        assert get(f"token={token}&chain=base")[0] == 200
+        assert audit.call_count == 2
+
+
+def test_http_multichain_token_preview_errors_are_generic(multichain_preview, caplog):
+    import logging
+
+    get, gate, _ = multichain_preview
+    secret = "rpc https://internal-rpc.example/v1/private-path refused"
+    demo_result = {"status": "VERIFICATION_FAILED", "chains_checked": ["base", "arbitrum"]}
+    caplog.set_level(logging.ERROR, logger="omni_x402_prover.http")
+    with patch(
+        "omni_x402_prover.http_server.verify_multichain_token_invariants",
+        side_effect=[RuntimeError(secret), demo_result],
+    ):
+        status, data, _ = get("demo=asymmetric_peer")
+        assert status == 500
+        assert data == {"error": "Failed to compute multichain token preview"}
+        assert any(
+            r.name == "omni_x402_prover.http" and r.exc_info and str(r.exc_info[1]) == secret
+            for r in caplog.records
+        )
+        assert gate.try_acquire()
+        gate.release()
+
+        status, data, _ = get("demo=asymmetric_peer")
+        assert (status, data["verdict"]) == (200, "VERIFICATION_FAILED")
