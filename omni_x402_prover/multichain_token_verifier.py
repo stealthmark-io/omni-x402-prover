@@ -45,12 +45,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 DEFAULT_PUBLIC_RPCS: Dict[str, str] = {
-    "ethereum": "https://eth.llamarpc.com",
-    "base": "https://mainnet.base.org",
-    "arbitrum": "https://arb1.arbitrum.io/rpc",
-    "optimism": "https://mainnet.optimism.io",
-    "polygon": "https://polygon-rpc.com",
-    "bsc": "https://binance.llamarpc.com",
+    "ethereum": "https://ethereum-rpc.publicnode.com",
+    "base": "https://base-rpc.publicnode.com",
+    "arbitrum": "https://arbitrum-one-rpc.publicnode.com",
+    "optimism": "https://optimism-rpc.publicnode.com",
+    "polygon": "https://polygon-bor-rpc.publicnode.com",
+    "bsc": "https://bsc-rpc.publicnode.com",
 }
 
 # LayerZero v2 Endpoint IDs (EIDs)

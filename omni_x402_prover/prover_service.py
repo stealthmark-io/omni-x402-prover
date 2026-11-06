@@ -2727,7 +2727,7 @@ class ProverService:
                 audit_res = grade_demo_profile(str(demo).strip())
             else:
                 target = str(payload.get("target_url") or payload.get("seller_url")).strip()
-                allow_loopback = bool(payload.get("allow_loopback_for_tests", False))
+                allow_loopback = os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
                 audit_res = score_x402_seller(target, allow_loopback_for_tests=allow_loopback)
 
             full_fix_pack = build_seller_fix_pack(audit_res, redacted=False)

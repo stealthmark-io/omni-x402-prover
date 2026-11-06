@@ -821,3 +821,31 @@ class TestHTTPTrustGradeEndToEnd(unittest.TestCase):
         self.assertNotEqual(fix_pack["cloudflare_waf_fix"]["expression"], REDACTION_NOTICE)
         self.assertIn("cf.threat_score", fix_pack["cloudflare_waf_fix"]["expression"])
         self.assertIn("ruleset", fix_pack["cloudflare_waf_fix"]["curl_command"])
+
+    def test_ssrf_bypass_prevention_regression(self) -> None:
+        """
+        Hallazgo #1 regression: ensure allow_loopback query param or payload field
+        cannot bypass SSRF protection when X402_ALLOW_LOOPBACK_FOR_TESTS != '1'.
+        """
+        with patch.dict(os.environ, {"X402_ALLOW_LOOPBACK_FOR_TESTS": "0"}):
+            # 1. Preview route ignores ?allow_loopback=1 -> 400
+            status1, body1, _ = self._http_request("GET", "/x402/trust-grade/preview?url=http://127.0.0.1:8080&allow_loopback=1")
+            self.assertEqual(status1, 400)
+            self.assertIn("Invalid target URL", body1.get("error", ""))
+
+            # 2. Badge route ignores ?allow_loopback=1 -> 400
+            status2, body2, _ = self._http_request("GET", "/x402/trust-grade/badge.svg?url=http://127.0.0.1:8080&allow_loopback=1")
+            self.assertEqual(status2, 400)
+            self.assertIn("Invalid target URL", body2.get("error", ""))
+
+            # 3. Paid dossier endpoint rejects allow_loopback_for_tests in payload when env var != 1 -> 400
+            amt = self.config.price_sar_ed25519_atomic
+            payment_header = make_test_payment_header(self.config, amount=amt)
+            status3, body3, _ = self._http_request(
+                "POST",
+                "/x402/verify-sar-ed25519-dossier",
+                data={"target_url": "http://127.0.0.1:8080", "allow_loopback_for_tests": True},
+                headers={"X-PAYMENT": payment_header},
+            )
+            self.assertEqual(status3, 400)
+            self.assertIn("error", body3)
