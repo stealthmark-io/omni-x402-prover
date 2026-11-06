@@ -57,7 +57,7 @@ B2B_OFFERS = [
             "Full Cloudflare WAF unblocking (Skip BIC rule), MCP/Glama registry listing, "
             "and x402 v2 challenge remediation done for you."
         ),
-        "contact_url": "https://gateway.stealthmark.io/contact?service=fix49",
+        "contact_url": "https://stealthmark.io/pricing?service=fix49",
     },
     {
         "tier": "uptime_badge_monitor",
@@ -68,7 +68,7 @@ B2B_OFFERS = [
             "Continuous 5-minute agent synthetic probe, dynamic trust badge CDN, "
             "and instant Telegram/webhook alert on bot block."
         ),
-        "contact_url": "https://gateway.stealthmark.io/contact?service=monitor19",
+        "contact_url": "https://stealthmark.io/pricing?service=monitor19",
     },
 ]
 
@@ -1769,12 +1769,12 @@ def render_leaderboard_html(entries: List[Dict[str, Any]], base_url: str = "") -
             <div class="card">
                 <h3>$49 Audit &amp; Listing Fix</h3>
                 <p>Cloudflare WAF Custom Rule (Skip BIC), Model Context Protocol (MCP) registration, and CORS fix delivered in 24 hours.</p>
-                <a href="https://gateway.stealthmark.io/contact?service=fix49" class="cta-btn" target="_blank" rel="noopener">Request $49 Remediation</a>
+                <a href="https://stealthmark.io/pricing?service=fix49" class="cta-btn" target="_blank" rel="noopener">Request $49 Remediation</a>
             </div>
             <div class="card">
                 <h3>$19/mo Badge &amp; Synthetic Monitor</h3>
                 <p>5-minute continuous probe simulating LangChain/CrewAI Python buyers with dynamic Shields badge CDN &amp; instant alerts.</p>
-                <a href="https://gateway.stealthmark.io/contact?service=monitor19" class="cta-btn" target="_blank" rel="noopener">Subscribe for $19/mo</a>
+                <a href="https://stealthmark.io/pricing?service=monitor19" class="cta-btn" target="_blank" rel="noopener">Subscribe for $19/mo</a>
             </div>
         </div>
 
