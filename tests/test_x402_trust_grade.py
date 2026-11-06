@@ -754,6 +754,8 @@ class TestHTTPTrustGradeEndToEnd(unittest.TestCase):
         # SSRF forbidden URL -> 400 Bad Request
         status, body, _ = self._http_request("GET", "/x402/trust-grade/preview?url=http://127.0.0.1:8080")
         self.assertEqual(status, 400)
+        status_bypass, body_bypass, _ = self._http_request("GET", "/x402/trust-grade/preview?url=http://127.0.0.1:8080&allow_loopback=1")
+        self.assertEqual(status_bypass, 400)
         self.assertIn("Invalid target URL", body.get("error", ""))
 
         # Demo profile -> 200 OK with redacted fix_pack

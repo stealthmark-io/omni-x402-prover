@@ -794,10 +794,7 @@ async function probe(){{
             qs = parse_qs(parsed.query)
             url = qs.get("url", [""])[0].strip()
             demo = qs.get("demo", [""])[0].strip().lower()
-            allow_loopback = (
-                qs.get("allow_loopback", ["0"])[0].strip().lower() in ("1", "true")
-                or os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
-            )
+            allow_loopback = os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
 
             if not url and not demo:
                 self._send_json_response(
@@ -854,10 +851,7 @@ async function probe(){{
             url = qs.get("url", [""])[0].strip()
             domain = qs.get("domain", [""])[0].strip().lower()
             label = qs.get("label", ["x402 trust"])[0].strip()
-            allow_loopback = (
-                qs.get("allow_loopback", ["0"])[0].strip().lower() in ("1", "true")
-                or os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
-            )
+            allow_loopback = os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
 
             grade = "unknown"
             score = 0
