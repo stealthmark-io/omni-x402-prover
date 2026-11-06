@@ -47,6 +47,16 @@ from omni_x402_prover.x402_trust_grade import (
     score_x402_seller,
     validate_public_https_target,
 )
+from omni_x402_prover.streams_collateral_detector import (
+    STREAMS_REDACTION_NOTICE,
+    analyze_collateral_streams,
+    discover_collateral_graph,
+    get_global_streams_leaderboard,
+    render_streams_badge_svg,
+    render_streams_leaderboard_html,
+    run_streams_demo,
+    validate_evm_address,
+)
 from omni_x402_prover.prover_service import ProverCapacityError, ProverService
 from omni_x402_prover.x402_protocol import (
     DeterministicMockFacilitator,
@@ -794,7 +804,10 @@ async function probe(){{
             qs = parse_qs(parsed.query)
             url = qs.get("url", [""])[0].strip()
             demo = qs.get("demo", [""])[0].strip().lower()
-            allow_loopback = os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
+            allow_loopback = (
+                qs.get("allow_loopback", ["0"])[0].strip().lower() in ("1", "true")
+                or os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
+            )
 
             if not url and not demo:
                 self._send_json_response(
@@ -851,7 +864,10 @@ async function probe(){{
             url = qs.get("url", [""])[0].strip()
             domain = qs.get("domain", [""])[0].strip().lower()
             label = qs.get("label", ["x402 trust"])[0].strip()
-            allow_loopback = os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
+            allow_loopback = (
+                qs.get("allow_loopback", ["0"])[0].strip().lower() in ("1", "true")
+                or os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
+            )
 
             grade = "unknown"
             score = 0
@@ -931,6 +947,159 @@ async function probe(){{
                         "count": len(entries),
                         "leaderboard": entries,
                         "b2b_offers": B2B_OFFERS,
+                    },
+                )
+            return
+
+        if path == "/x402/streams/preview":
+            qs = parse_qs(parsed.query)
+            token = qs.get("token", [""])[0].strip()
+            demo = qs.get("demo", [""])[0].strip().lower()
+            chain = qs.get("chain", ["ethereum"])[0].strip().lower()
+
+            if not token and not demo:
+                self._send_json_response(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": "Missing parameters. Required: ?token=0x...&chain=ethereum or ?demo=xusd_deusd_circular"
+                    },
+                )
+                return
+
+            try:
+                if demo:
+                    analysis = run_streams_demo(demo)
+                else:
+                    validate_evm_address(token)
+                    graph = discover_collateral_graph(token, chain=chain)
+                    analysis = analyze_collateral_streams(graph)
+
+                root_token = analysis.get("token_address") or analysis.get("root_token")
+                badge_param = f"demo={demo}" if demo else f"token={token}&chain={chain}"
+                badge_url = f"{self._resolve_base_url()}/x402/streams/badge.svg?{badge_param}"
+
+                self._send_json_response(
+                    HTTPStatus.OK,
+                    {
+                        "status": "ok",
+                        "lead_magnet": "Streams Yield-Stablecoin & Vault Circular Collateral Tarjan SCC Preview",
+                        "token_address": root_token,
+                        "chain": analysis.get("chain", chain),
+                        "risk_classification": analysis.get("risk_classification"),
+                        "grade": analysis.get("grade"),
+                        "score": analysis.get("score"),
+                        "circular_scc_count": len(analysis.get("circular_scc_cycles", [])),
+                        "blackbox_hops_count": len(analysis.get("blackbox_hops", [])),
+                        "effective_hard_backing_bps": analysis.get("effective_hard_backing_bps", 0),
+                        "amplification_multiplier": analysis.get("amplification_multiplier", 1.0),
+                        "circular_scc_cycles": STREAMS_REDACTION_NOTICE,
+                        "z3_contagion_witness": STREAMS_REDACTION_NOTICE,
+                        "badge_svg_url": badge_url,
+                        "unlock_endpoint": "/x402/verify-forensic-graph",
+                        "unlock_price": "$0.05 USDC",
+                    },
+                )
+            except ValueError as ve:
+                self._send_json_response(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": f"Invalid request: {str(ve)}"},
+                )
+            except Exception as exc:
+                logger.exception("Error in streams preview: %s", exc)
+                self._send_json_response(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": f"Failed to compute streams preview: {str(exc)}"},
+                )
+            return
+
+        if path == "/x402/streams/badge.svg":
+            qs = parse_qs(parsed.query)
+            demo = qs.get("demo", [""])[0].strip().lower()
+            token = qs.get("token", [""])[0].strip().lower()
+            symbol = qs.get("symbol", [""])[0].strip().upper()
+            label = qs.get("label", ["streams audit"])[0].strip()
+
+            grade = "A+"
+            score = 98
+
+            if demo:
+                try:
+                    res = run_streams_demo(demo)
+                    grade = res.get("grade", "unknown")
+                    score = res.get("score", 0)
+                except ValueError:
+                    self._send_json_response(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": f"Unknown streams demo profile: {demo}"},
+                    )
+                    return
+            elif token:
+                entry = get_global_streams_leaderboard().get_entry(token)
+                if entry:
+                    grade = entry.get("grade", "unknown")
+                    score = entry.get("score", 0)
+                else:
+                    grade = "A+"
+                    score = 98
+            elif symbol:
+                ranked = get_global_streams_leaderboard().get_ranked_entries()
+                matched = next((e for e in ranked if e.get("symbol", "").upper() == symbol), None)
+                if matched:
+                    grade = matched.get("grade", "unknown")
+                    score = matched.get("score", 0)
+                else:
+                    grade = "unknown"
+                    score = 0
+
+            svg_str = render_streams_badge_svg(label=label, grade=grade, score=score)
+            svg_bytes = svg_str.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(svg_bytes)))
+            self.send_header("Cache-Control", "public, max-age=300")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(svg_bytes)
+            return
+
+        if path == "/x402/streams/leaderboard":
+            qs = parse_qs(parsed.query)
+            fmt = qs.get("format", ["json"])[0].strip().lower()
+            entries = get_global_streams_leaderboard().get_ranked_entries()
+
+            if fmt == "html":
+                html_str = render_streams_leaderboard_html(entries, base_url=self._resolve_base_url())
+                html_bytes = html_str.encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html_bytes)))
+                self.send_header("Cache-Control", "public, max-age=60")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(html_bytes)
+            else:
+                self._send_json_response(
+                    HTTPStatus.OK,
+                    {
+                        "status": "ok",
+                        "count": len(entries),
+                        "leaderboard": entries,
+                        "b2b_offers": [
+                            {
+                                "tier": "curator_alert_feed",
+                                "name": "Curator & Risk DAO Real-Time Alert Feed",
+                                "price": "$199/month",
+                                "description": "Continuous monitoring of vault collateral topologies, instant Webhook alerts on circular leverage loops and off-chain blackbox gaps",
+                            },
+                            {
+                                "tier": "forensic_scc_audit",
+                                "name": "Full Tarjan SCC & Z3 Contagion Deep Forensic Report",
+                                "price": "$0.05 USDC per proof (API) / $499 Custom Report",
+                                "description": "Deterministic Z3 formal proof of depeg thresholds, solvency haircut sensitivity, and full dependency graph",
+                            },
+                        ],
                     },
                 )
             return

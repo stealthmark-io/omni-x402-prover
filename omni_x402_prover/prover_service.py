@@ -1565,7 +1565,9 @@ class ProverService:
     def verify_forensic_graph(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handler 5: /x402/verify-forensic-graph
-        Supports two modes:
+        Supports three modes:
+          - Mode C (Streams Circular Collateral & Contagion Detector): if 'token_address', 'vault_address',
+            'streams_demo', or 'collateral_topology' is passed, runs Tarjan SCC cycle finder and Z3 contagion solver.
           - Mode A (Swarm Task v2 mode): if 'task' (or 'task_id' + 'scope_grant' + 'input') is passed,
             runs StatelessGraphChainWorker().execute_task(task_dict) and returns
             {"verified": result.status == "ok", "mode": "swarm_task_v2", "result": asdict(result), "audit_event": asdict(event)}.
@@ -1573,6 +1575,45 @@ class ProverService:
             (or 'tainted_Root_wallets'), optional 'protocol_nodes', 'bridge_nodes', 'max_window_seconds',
             'amount_tolerance', 'bridge_max_window_seconds', 'bridge_fee_tolerance'.
         """
+        # Mode C: Streams Circular Collateral & Contagion Detector (Diamond Mine C1)
+        if any(k in payload for k in ("token_address", "vault_address", "streams_demo", "collateral_topology")):
+            from omni_x402_prover.streams_collateral_detector import (
+                analyze_collateral_streams,
+                discover_collateral_graph,
+                run_streams_demo,
+            )
+
+            if "streams_demo" in payload:
+                demo = str(payload["streams_demo"]).strip().lower()
+                analysis = run_streams_demo(demo)
+            elif "collateral_topology" in payload:
+                topology = payload["collateral_topology"]
+                analysis = analyze_collateral_streams(topology)
+            else:
+                token_addr = str(payload.get("token_address") or payload.get("vault_address")).strip()
+                chain = str(payload.get("chain", "ethereum")).strip().lower()
+                max_depth = int(payload.get("max_depth", 4))
+                graph = discover_collateral_graph(token_addr, chain=chain, max_depth=max_depth)
+                analysis = analyze_collateral_streams(graph)
+
+            return {
+                "verified": analysis.get("risk_classification") == "CLEAN_HARD_BACKED",
+                "mode": "streams_circular_collateral_c1",
+                "risk_classification": analysis.get("risk_classification"),
+                "grade": analysis.get("grade"),
+                "score": analysis.get("score"),
+                "token_address": analysis.get("token_address") or analysis.get("root_token"),
+                "chain": analysis.get("chain", "ethereum"),
+                "circular_scc_cycles": analysis.get("circular_scc_cycles", []),
+                "blackbox_hops": analysis.get("blackbox_hops", []),
+                "loop_weight_bps": analysis.get("loop_weight_bps", 0),
+                "amplification_multiplier": analysis.get("amplification_multiplier", 1.0),
+                "effective_hard_backing_bps": analysis.get("effective_hard_backing_bps", 0),
+                "z3_contagion_witness": analysis.get("z3_contagion_witness"),
+                "nodes": analysis.get("nodes", {}),
+                "edges": analysis.get("edges", []),
+            }
+
         # Mode A: Swarm Task Mode
         if "task" in payload or ("task_id" in payload and "scope_grant" in payload and "input" in payload):
             task_dict = payload.get("task") if "task" in payload else payload
@@ -2686,7 +2727,7 @@ class ProverService:
                 audit_res = grade_demo_profile(str(demo).strip())
             else:
                 target = str(payload.get("target_url") or payload.get("seller_url")).strip()
-                allow_loopback = os.environ.get("X402_ALLOW_LOOPBACK_FOR_TESTS") == "1"
+                allow_loopback = bool(payload.get("allow_loopback_for_tests", False))
                 audit_res = score_x402_seller(target, allow_loopback_for_tests=allow_loopback)
 
             full_fix_pack = build_seller_fix_pack(audit_res, redacted=False)
@@ -2960,6 +3001,11 @@ class ProverService:
                             "bridge_max_window_seconds": {"type": "integer", "default": 7200},
                             "bridge_fee_tolerance": {"type": "number", "default": 0.05},
                             "task": {"type": "object", "description": "Optional SwarmTaskV2 payload"},
+                            "token_address": {"type": "string", "description": "Mode C: Target ERC-20 / vault token address to verify collateral backing"},
+                            "vault_address": {"type": "string", "description": "Mode C: Alternative parameter for vault address"},
+                            "streams_demo": {"type": "string", "description": "Mode C: Built-in deterministic demo ('xusd_deusd_circular', 'opaque_offchain_yield', 'clean_erc4626_usdc')"},
+                            "collateral_topology": {"type": "object", "description": "Mode C: Custom in-memory collateral dependency graph topology"},
+                            "chain": {"type": "string", "default": "ethereum", "description": "Target blockchain for Mode C ('ethereum', 'base', 'arbitrum')"},
                         },
                     },
                     "outputSchema": {

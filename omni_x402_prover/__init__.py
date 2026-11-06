@@ -33,6 +33,18 @@ from omni_x402_prover.x402_trust_grade import (
     score_x402_seller,
     validate_public_https_target,
 )
+from omni_x402_prover.streams_collateral_detector import (
+    STREAMS_REDACTION_NOTICE,
+    StreamsLeaderboard,
+    analyze_collateral_streams,
+    discover_collateral_graph,
+    get_global_streams_leaderboard,
+    render_streams_badge_svg,
+    render_streams_leaderboard_html,
+    run_daily_streams_ranking_job,
+    run_streams_demo,
+    validate_evm_address,
+)
 
 __all__ = [
     "__version__",
@@ -56,4 +68,14 @@ __all__ = [
     "render_trust_grade_svg",
     "score_x402_seller",
     "validate_public_https_target",
+    "STREAMS_REDACTION_NOTICE",
+    "StreamsLeaderboard",
+    "analyze_collateral_streams",
+    "discover_collateral_graph",
+    "get_global_streams_leaderboard",
+    "render_streams_badge_svg",
+    "render_streams_leaderboard_html",
+    "run_daily_streams_ranking_job",
+    "run_streams_demo",
+    "validate_evm_address",
 ]
