@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 COPY pyproject.toml README.md LICENSE bazaar_manifest.json ./
 COPY omni_x402_prover ./omni_x402_prover
 
-RUN pip install --no-cache-dir z3-solver && \
+RUN pip install --no-cache-dir z3-solver==5.3.3.0 && \
     pip install --no-cache-dir --no-deps .
 
 EXPOSE 8402
