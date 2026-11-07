@@ -1095,7 +1095,7 @@ async function probe(){{
                 logger.exception("Error in streams preview: %s", exc)
                 self._send_json_response(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
-                    {"error": f"Failed to compute streams preview: {str(exc)}"},
+                    {"error": "Failed to compute streams preview"},
                 )
             return
 

@@ -552,6 +552,20 @@ class TestHTTPStreamsEndToEnd(unittest.TestCase):
             self.assertEqual(data["z3_contagion_witness"], STREAMS_REDACTION_NOTICE)
             self.assertIn("badge_svg_url", data)
 
+    def test_get_streams_preview_error_is_generic_and_logged(self):
+        secret = "internal detail /opt/omni/private-path"
+        req = Request(f"{self.base_url}/x402/streams/preview?demo=xusd_deusd_circular")
+        with patch(
+            "omni_x402_prover.http_server.run_streams_demo",
+            side_effect=RuntimeError(secret),
+        ), self.assertLogs("omni_x402_prover.http", level="ERROR") as logs:
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(req)
+        self.assertEqual(ctx.exception.code, HTTPStatus.INTERNAL_SERVER_ERROR)
+        err = json.loads(ctx.exception.read().decode("utf-8"))
+        self.assertEqual(err, {"error": "Failed to compute streams preview"})
+        self.assertEqual(str(logs.records[0].exc_info[1]), secret)
+
     def test_get_streams_badge_svg(self):
         req = Request(f"{self.base_url}/x402/streams/badge.svg?demo=clean_erc4626_usdc")
         with urlopen(req) as resp:
